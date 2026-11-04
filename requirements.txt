@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+pygithub
+langgraph
+chromadb
+anthropic
+python-dotenv
+tree-sitter
+tree-sitter-python
+sentence-transformers
+pytest
+httpx
