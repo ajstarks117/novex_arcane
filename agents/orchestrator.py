@@ -88,17 +88,12 @@ def idle_node(state: ArcaneState) -> ArcaneState:
     }
 
 
+from agents.analyst_agent import analyze as run_analyst
+
 def analyzing_node(state: ArcaneState) -> ArcaneState:
     """ANALYZING — parses failure log to extract test name, file, line, root cause."""
-    logger.info("[ANALYZING] Parsing failure log for root cause")
-    return {
-        **state,
-        "failing_test": "test_payment_processing",
-        "failing_file": "src/payments/processor.py",
-        "failing_line": 142,
-        "root_cause_summary": "Off-by-one error in discount calculation when quantity == 0",
-        "suspected_function": "calculate_discount",
-    }
+    logger.info("[ANALYZING] Delegating to Analyst Agent")
+    return run_analyst(state)
 
 
 def bisecting_node(state: ArcaneState) -> ArcaneState:
