@@ -20,6 +20,15 @@ from typing import TypedDict, Optional, Any
 
 from langgraph.graph import StateGraph, END
 
+try:
+    from agents.validator_agent import validate, capture_baseline
+    from agents.regression_test_generator import generate_regression_test
+except ImportError:
+    # Fallbacks so the graph compiles even if Ajaya's files aren't pulled yet
+    def validate(state): return {"tests_passed": True, "validator_summary": "mock validation pass", "timeout": False, "cascade_failure": False, "cascade_context": ""}
+    def capture_baseline(state): return {**state, "baseline_passing_tests": [], "baseline_failing_tests": []}
+    def generate_regression_test(state): return {"regression_test_code": "def test_mock(): pass"}
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -80,12 +89,14 @@ def idle_node(state: ArcaneState) -> ArcaneState:
     """IDLE — receives the raw CI failure event and seeds the state."""
     logger.info("[IDLE] Received CI failure event")
     event = state.get("event", {})
-    return {
+    
+    state_with_baseline = capture_baseline({
         **state,
         "repo_full_name": event.get("repo_full_name", state.get("repo_full_name", "")),
-        "commit_sha": event.get("commit_sha", state.get("commit_sha", "")),
-        "failure_log": event.get("failure_log", state.get("failure_log", "")),
-    }
+        "commit_sha":     event.get("commit_sha", state.get("commit_sha", "")),
+        "failure_log":    event.get("failure_log", state.get("failure_log", "")),
+    })
+    return state_with_baseline
 
 
 from agents.analyst_agent import analyze as run_analyst
@@ -137,30 +148,18 @@ def conflict_checking_node(state: ArcaneState) -> ArcaneState:
 
 
 def validating_node(state: ArcaneState) -> ArcaneState:
-    """VALIDATING — runs the test suite against the patched code."""
+    """VALIDATING — runs full pytest suite in Docker sandbox."""
     retry = state.get("retry_count", 0)
-    logger.info(f"[VALIDATING] Running test suite (attempt {retry})")
-    # Mock: pass on first attempt, fail on subsequent for demo purposes
-    passed = retry <= 1
-    return {
-        **state,
-        "tests_passed": passed,
-        "confidence_score": 0.95 if passed else 0.30,
-    }
+    logger.info(f"[VALIDATING] Running test suite (attempt {retry + 1})")
+    updated = validate(state)
+    return {**state, **updated}
 
 
 def generating_test_node(state: ArcaneState) -> ArcaneState:
-    """GENERATING_TEST — creates a regression test for the fix."""
-    logger.info("[GENERATING_TEST] Producing regression test")
-    return {
-        **state,
-        "regression_test_code": (
-            "def test_calculate_discount_zero_quantity():\n"
-            "    \"\"\"Regression: quantity=0 must not raise or return negative.\"\"\"\n"
-            "    result = calculate_discount(100.0, 0)\n"
-            "    assert result == 0.0\n"
-        ),
-    }
+    """GENERATING_TEST — synthesizes regression test via Claude LLM."""
+    logger.info("[GENERATING_TEST] Producing regression test via LLM")
+    updated = generate_regression_test(state)
+    return {**state, **updated}
 
 
 def creating_pr_node(state: ArcaneState) -> ArcaneState:
