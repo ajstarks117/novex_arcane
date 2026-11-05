@@ -27,24 +27,59 @@ def validate(state: Dict[str, Any]) -> Dict[str, Any]:
     
     current_retry = state.get("retry_count", 0)
     
+    # Parse post-patch pytest output
+    post_patch_passing = set()
+    post_patch_failing = set()
+    pattern = r"(\S+)\s+(PASSED|FAILED)"
+    for match in re.finditer(pattern, output):
+        test_path = match.group(1)
+        status_match = match.group(2)
+        if status_match == "PASSED":
+            post_patch_passing.add(test_path)
+        elif status_match == "FAILED":
+            post_patch_failing.add(test_path)
+            
+    # Compute cascade failures
+    baseline_failing_tests = set(state.get("baseline_failing_tests", []))
+    cascade_failures = post_patch_failing - baseline_failing_tests
+    
     # 3. Handle timeout
     if output == "TIMEOUT" or exit_code == -1:
         tests_passed = False
         state["timeout"] = True
+        state["cascade_failure"] = False
         state["retry_count"] = current_retry + 1
         print(f"VALIDATOR TIMEOUT — sandbox exceeded 120s")
         state["validator_summary"] = "Sandbox timed out after 120s."
     
+    # Cascade failure check
+    elif cascade_failures:
+        tests_passed = False
+        state["timeout"] = False
+        state["cascade_failure"] = True
+        state["cascade_failure_report"] = list(cascade_failures)
+        state["retry_count"] = current_retry + 1
+        
+        failing_test = state.get("failing_test", "the target test")
+        state["cascade_context"] = f"Previous patch fixed {failing_test} but broke: {list(cascade_failures)}. Do not break these tests."
+        
+        print(f"CASCADE DETECTED — {len(cascade_failures)} tests newly broken: {list(cascade_failures)}")
+        state["validator_summary"] = f"Original test fixed. BUT {len(cascade_failures)} new test failures introduced: {list(cascade_failures)}. Looping back."
+    
     # 1. Handle PASS
     elif exit_code == 0:
         tests_passed = True
+        state["timeout"] = False
+        state["cascade_failure"] = False
         state["retry_count"] = current_retry # Do not increment
         print(f"VALIDATOR PASS — {repo_full_name} @ {commit_sha[:7]} — exit 0")
         state["validator_summary"] = "All tests passed. No failures."
         
-    # 2. Handle FAIL
+    # 2. Handle FAIL (no cascade, just standard failure)
     else:
         tests_passed = False
+        state["timeout"] = False
+        state["cascade_failure"] = False
         state["retry_count"] = current_retry + 1
         print(f"VALIDATOR FAIL — {repo_full_name} @ {commit_sha[:7]} — exit {exit_code} — retry {state['retry_count']}")
         state["validator_summary"] = f"Tests failed with exit code {exit_code}. Retry {state['retry_count']}."
