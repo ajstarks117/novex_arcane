@@ -5,8 +5,8 @@ import sys
 from agents.sandbox_runner import run_sandbox
 
 def test_sandbox_boot():
-    # ARCANE demo repo URL (using the corpus name as a likely candidate)
-    repo_url = "https://github.com/aryanketkar-15/ARCANE_Nexus2.0"
+    # ARCANE demo repo URL (using the official demo repo)
+    repo_url = "https://github.com/aryanketkar-15/arcane-demo-repo"
     commit_sha = "main" # Using main as HEAD
     
     start_time = time.time()
