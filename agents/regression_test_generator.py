@@ -1,0 +1,119 @@
+import os
+import requests
+import json
+from typing import Dict, Any
+
+def call_llm(prompt_system: str, prompt_user: str) -> str:
+    """
+    Calls Claude API, with a fallback to local Ollama if rate-limited or missing key.
+    """
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    
+    # Try Claude
+    if api_key:
+        try:
+            headers = {
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json"
+            }
+            data = {
+                "model": "claude-3-5-sonnet-20240620", # Updated from claude-sonnet-4-20250514 placeholder
+                "max_tokens": 1024,
+                "system": prompt_system,
+                "messages": [
+                    {"role": "user", "content": prompt_user}
+                ]
+            }
+            response = requests.post("https://api.anthropic.com/v1/messages", headers=headers, json=data, timeout=15)
+            
+            if response.status_code == 200:
+                return response.json()["content"][0]["text"]
+            else:
+                print(f"Claude API failed ({response.status_code}): {response.text}. Falling back to Ollama...")
+        except Exception as e:
+            print(f"Claude API request failed: {e}. Falling back to Ollama...")
+    else:
+        print("ANTHROPIC_API_KEY not found. Falling back to Ollama...")
+        
+    # Fallback to Ollama
+    try:
+        data = {
+            "model": "llama3",
+            "prompt": f"{prompt_system}\n\n{prompt_user}",
+            "stream": False
+        }
+        response = requests.post("http://localhost:11434/api/generate", json=data, timeout=15)
+        if response.status_code == 200:
+            return response.json()["response"]
+        else:
+            return ""
+    except Exception as e:
+        print(f"Ollama request failed: {e}")
+        return ""
+
+def generate_regression_test(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Generates a pytest regression test using an LLM based on the root cause and patch.
+    """
+    root_cause_summary = state.get("root_cause_summary", "Unknown root cause")
+    patch_diff = state.get("patch_diff", "")
+    failing_file = state.get("failing_file", "unknown_file.py")
+    commit_sha = state.get("commit_sha", "unknown")
+    
+    failing_file_stem = failing_file.replace("/", "_").replace(".py", "")
+
+    system_prompt = (
+        "You are an expert Python test engineer. Return ONLY valid pytest code. "
+        "No preamble, no markdown, no explanation. Just the test function starting with 'def test_'. "
+        "Do not use markdown. Do not use backticks. "
+        "The function must include a docstring as its first statement."
+    )
+    
+    user_prompt = f"""Root cause: {root_cause_summary}
+Patch applied to {failing_file}:
+{patch_diff}
+
+Write a pytest function named test_{failing_file_stem}_regression that:
+- Would FAIL on the original buggy code
+- Would PASS on the patched code
+- Tests the exact scenario described in the root cause
+- Is standalone: no fixtures, minimal imports
+- Includes a docstring: "Regression test for: {root_cause_summary}"
+Return only the function. No class wrapper."""
+
+    print("Generating regression test via LLM...")
+    generated_code = call_llm(system_prompt, user_prompt)
+    
+    # Post-processing: strip markdown backticks if LLM disobeyed
+    cleaned_code = ""
+    for line in generated_code.splitlines():
+        if not line.strip().startswith("```"):
+            cleaned_code += line + "\n"
+    
+    regression_test_code = cleaned_code.strip()
+    
+    # Fallback if no docstring
+    if '"""' not in regression_test_code and "'''" not in regression_test_code:
+        print("Warning: Generated test has no docstring. Retrying once...")
+        system_prompt += " YOU MUST INCLUDE A DOCSTRING AS THE FIRST STATEMENT IN THE FUNCTION."
+        generated_code = call_llm(system_prompt, user_prompt)
+        cleaned_code = ""
+        for line in generated_code.splitlines():
+            if not line.strip().startswith("```"):
+                cleaned_code += line + "\n"
+        regression_test_code = cleaned_code.strip()
+
+    # Write to file
+    sha_short = commit_sha[:7] if commit_sha else "unknown"
+    test_file_path = f"/tmp/arcane_regtest_{sha_short}.py"
+    
+    with open(test_file_path, "w", encoding="utf-8") as f:
+        f.write(regression_test_code)
+        
+    print(f"Regression test generated and saved to {test_file_path}")
+    
+    state["regression_test_code"] = regression_test_code
+    state["regression_test_file"] = test_file_path
+    
+    return state
