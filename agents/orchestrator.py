@@ -109,23 +109,12 @@ def bisecting_node(state: ArcaneState) -> ArcaneState:
     }
 
 
+from agents.patch_generator import generate_patch as run_patch_generator
+
 def patching_node(state: ArcaneState) -> ArcaneState:
     """PATCHING — generates a code patch to fix the suspected function."""
-    retry = state.get("retry_count", 0)
-    logger.info(f"[PATCHING] Generating patch (attempt {retry + 1})")
-    return {
-        **state,
-        "patch_diff": (
-            "--- a/src/payments/processor.py\n"
-            "+++ b/src/payments/processor.py\n"
-            "@@ -140,3 +140,3 @@\n"
-            " def calculate_discount(price, quantity):\n"
-            "-    if quantity > 0:\n"
-            "+    if quantity >= 0:\n"
-            "         return price * DISCOUNT_RATE * quantity\n"
-        ),
-        "retry_count": retry + 1,
-    }
+    logger.info("[PATCHING] Delegating to Patch Generator")
+    return run_patch_generator(state)
 
 
 def propagating_node(state: ArcaneState) -> ArcaneState:
