@@ -30,7 +30,7 @@ def validate(state: Dict[str, Any]) -> Dict[str, Any]:
     # Parse post-patch pytest output
     post_patch_passing = set()
     post_patch_failing = set()
-    pattern = r"(\S+)\s+(PASSED|FAILED)"
+    pattern = r"(\S+)[ \t]+(PASSED|FAILED)"
     for match in re.finditer(pattern, output):
         test_path = match.group(1)
         status_match = match.group(2)
@@ -112,8 +112,8 @@ def capture_baseline(state: Dict[str, Any]) -> Dict[str, Any]:
     passing_tests = set()
     failing_tests = set()
     
-    # Regex: test_path followed by whitespace and PASSED/FAILED
-    pattern = r"(\S+)\s+(PASSED|FAILED)"
+    # Regex: test_path followed by whitespace and PASSED/FAILED on the same line
+    pattern = r"(\S+)[ \t]+(PASSED|FAILED)"
     for match in re.finditer(pattern, output):
         test_path = match.group(1)
         status = match.group(2)

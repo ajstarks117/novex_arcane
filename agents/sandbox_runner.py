@@ -2,7 +2,24 @@ import subprocess
 import os
 import uuid
 import time
+import threading
 from typing import Optional, Dict, Any
+
+def warm_sandbox(repo_url: str):
+    """
+    Starts a background container and pre-clones the repo to save time on the next run.
+    """
+    # Health check: remove if it exists (even if stopped)
+    subprocess.run(["docker", "rm", "-f", "arcane-warm"], capture_output=True)
+    
+    # Boot warm container
+    boot_res = subprocess.run(
+        ["docker", "run", "-d", "--name", "arcane-warm", "arcane-sandbox", "sleep", "infinity"],
+        capture_output=True
+    )
+    if boot_res.returncode == 0:
+        # Pre-clone the repo
+        subprocess.run(["docker", "exec", "-i", "arcane-warm", "git", "clone", repo_url, "."], capture_output=True)
 
 def run_sandbox(repo_url: str, commit_sha: str, patch_diff: Optional[str] = None) -> Dict[str, Any]:
     """
@@ -11,16 +28,9 @@ def run_sandbox(repo_url: str, commit_sha: str, patch_diff: Optional[str] = None
     container_name = f"arcane-{uuid.uuid4().hex[:8]}"
     print(f"Starting container: {container_name}")
     
+    t_start = time.perf_counter()
+    
     try:
-        # 1. Boot the container
-        # We run it in the background and keep it alive with 'tail -f /dev/null' or 'sleep infinity'
-        subprocess.run(
-            ["docker", "run", "-d", "--name", container_name, "arcane-sandbox", "sleep", "infinity"],
-            check=True,
-            capture_output=True,
-            text=True
-        )
-
         # Helper to run commands inside the container
         def exec_in_container(cmd, input_str=None, timeout=None):
             return subprocess.run(
@@ -31,10 +41,29 @@ def run_sandbox(repo_url: str, commit_sha: str, patch_diff: Optional[str] = None
                 timeout=timeout
             )
 
-        # 2. Clone the repository inside the container's /sandbox
-        clone_res = exec_in_container(["git", "clone", repo_url, "."])
-        if clone_res.returncode != 0:
-            return {"passed": False, "output": f"Clone failed: {clone_res.stderr}", "exit_code": clone_res.returncode}
+        # 1. Boot or take warm container
+        rename_res = subprocess.run(["docker", "rename", "arcane-warm", container_name], capture_output=True)
+        if rename_res.returncode == 0:
+            t_boot = time.perf_counter()
+            print(f"SANDBOX: container ready in {t_boot - t_start:.2f}s (warmed)")
+            t_clone = t_boot
+            print(f"SANDBOX: repo cloned in 0.00s (pre-cloned)")
+        else:
+            subprocess.run(
+                ["docker", "run", "-d", "--name", container_name, "arcane-sandbox", "sleep", "infinity"],
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            t_boot = time.perf_counter()
+            print(f"SANDBOX: container ready in {t_boot - t_start:.2f}s")
+
+            # 2. Clone the repository inside the container's /sandbox
+            clone_res = exec_in_container(["git", "clone", repo_url, "."])
+            if clone_res.returncode != 0:
+                return {"passed": False, "output": f"Clone failed: {clone_res.stderr}", "exit_code": clone_res.returncode}
+            t_clone = time.perf_counter()
+            print(f"SANDBOX: repo cloned in {t_clone - t_boot:.2f}s")
 
         # 3. Checkout the specific commit SHA
         checkout_res = exec_in_container(["git", "checkout", commit_sha])
@@ -46,10 +75,15 @@ def run_sandbox(repo_url: str, commit_sha: str, patch_diff: Optional[str] = None
             patch_res = exec_in_container(["patch", "-p1"], input_str=patch_diff)
             if patch_res.returncode != 0:
                 return {"passed": False, "output": f"Patch failed: {patch_res.stderr}", "exit_code": patch_res.returncode}
+        
+        t_patch = time.perf_counter()
+        print(f"SANDBOX: patch applied in {t_patch - t_clone:.2f}s")
 
         # 5. Run pytest with a 120-second timeout
         try:
             pytest_res = exec_in_container(["env", "PYTHONPATH=.", "pytest", "-v"], timeout=120)
+            t_pytest = time.perf_counter()
+            print(f"SANDBOX: pytest done in {t_pytest - t_patch:.2f}s")
             return {
                 "passed": pytest_res.returncode == 0,
                 "output": pytest_res.stdout + pytest_res.stderr,
@@ -73,7 +107,8 @@ def run_sandbox(repo_url: str, commit_sha: str, patch_diff: Optional[str] = None
     finally:
         # 6. Always remove the container
         subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+        # Re-warm for next call in a background thread
+        threading.Thread(target=warm_sandbox, args=(repo_url,)).start()
 
 if __name__ == "__main__":
     pass
-
