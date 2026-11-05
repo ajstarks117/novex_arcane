@@ -49,7 +49,7 @@ def run_sandbox(repo_url: str, commit_sha: str, patch_diff: Optional[str] = None
 
         # 5. Run pytest with a 120-second timeout
         try:
-            pytest_res = exec_in_container(["env", "PYTHONPATH=.", "pytest"], timeout=120)
+            pytest_res = exec_in_container(["env", "PYTHONPATH=.", "pytest", "-v"], timeout=120)
             return {
                 "passed": pytest_res.returncode == 0,
                 "output": pytest_res.stdout + pytest_res.stderr,

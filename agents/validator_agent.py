@@ -1,5 +1,6 @@
 import sys
 import os
+import re
 from typing import Dict, Any
 
 # Ensure we can import from the agents package
@@ -53,4 +54,44 @@ def validate(state: Dict[str, Any]) -> Dict[str, Any]:
     state["test_output"] = output
     state["validator_exit_code"] = exit_code
         
+    return state
+
+def capture_baseline(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Captures the baseline state of the test suite before any patch is applied.
+    Should be called in the IDLE state in LangGraph.
+    """
+    # Guard: only capture once
+    if state.get("baseline_passing_tests") is not None:
+        return state
+        
+    repo_full_name = state.get("repo_full_name", "")
+    commit_sha = state.get("commit_sha", "")
+    repo_url = f"https://github.com/{repo_full_name}" if repo_full_name else ""
+    
+    # 1. Run sandbox with NO patch
+    sandbox_result = run_sandbox(repo_url, commit_sha, patch_diff=None)
+    output = sandbox_result.get("output", "")
+    
+    # 2. Parse pytest output
+    passing_tests = set()
+    failing_tests = set()
+    
+    # Regex: test_path followed by whitespace and PASSED/FAILED
+    pattern = r"(\S+)\s+(PASSED|FAILED)"
+    for match in re.finditer(pattern, output):
+        test_path = match.group(1)
+        status = match.group(2)
+        if status == "PASSED":
+            passing_tests.add(test_path)
+        elif status == "FAILED":
+            failing_tests.add(test_path)
+            
+    # Convert to lists for JSON compatibility in LangGraph state
+    state["baseline_passing_tests"] = list(passing_tests)
+    state["baseline_failing_tests"] = list(failing_tests)
+    
+    # 3. Log results
+    print(f"BASELINE CAPTURED — {len(passing_tests)} passing, {len(failing_tests)} failing")
+    
     return state
