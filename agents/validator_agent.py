@@ -24,20 +24,33 @@ def validate(state: Dict[str, Any]) -> Dict[str, Any]:
     exit_code = sandbox_result.get("exit_code", 1)
     output = sandbox_result.get("output", "")
     
-    # Pass rule: tests_passed = True ONLY if exit_code == 0
-    tests_passed = (exit_code == 0)
+    current_retry = state.get("retry_count", 0)
+    
+    # 3. Handle timeout
+    if output == "TIMEOUT" or exit_code == -1:
+        tests_passed = False
+        state["timeout"] = True
+        state["retry_count"] = current_retry + 1
+        print(f"VALIDATOR TIMEOUT — sandbox exceeded 120s")
+        state["validator_summary"] = "Sandbox timed out after 120s."
+    
+    # 1. Handle PASS
+    elif exit_code == 0:
+        tests_passed = True
+        state["retry_count"] = current_retry # Do not increment
+        print(f"VALIDATOR PASS — {repo_full_name} @ {commit_sha[:7]} — exit 0")
+        state["validator_summary"] = "All tests passed. No failures."
+        
+    # 2. Handle FAIL
+    else:
+        tests_passed = False
+        state["retry_count"] = current_retry + 1
+        print(f"VALIDATOR FAIL — {repo_full_name} @ {commit_sha[:7]} — exit {exit_code} — retry {state['retry_count']}")
+        state["validator_summary"] = f"Tests failed with exit code {exit_code}. Retry {state['retry_count']}."
     
     # Update the state dict
     state["tests_passed"] = tests_passed
     state["test_output"] = output
     state["validator_exit_code"] = exit_code
-    
-    # Handle retry count
-    current_retry = state.get("retry_count", 0)
-    if not tests_passed:
-        state["retry_count"] = current_retry + 1
-    else:
-        # Ensure retry_count exists even on pass, without incrementing
-        state["retry_count"] = current_retry
         
     return state
