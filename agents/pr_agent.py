@@ -6,10 +6,10 @@ from dotenv import load_dotenv
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-def create_pr(repo_full_name, base_branch, commit_sha, patch_diff, failing_test, validator_summary=None):
+def create_pr(repo_full_name, base_branch, commit_sha, patch_diff, failing_test, validator_summary=None, mermaid_diagram=None):
     """
     Creates a new branch from base_branch, commits the patch diff,
-    and opens a PR to main. Includes validator_summary if provided.
+    and opens a PR to main. Includes validator_summary and mermaid_diagram if provided.
     """
     token = os.getenv("GITHUB_PAT")
     if not token:
@@ -44,6 +44,9 @@ def create_pr(repo_full_name, base_branch, commit_sha, patch_diff, failing_test,
     pr_body = f"### Patch applied\n```diff\n{patch_diff}\n```\n\n**Failing Test:** `{failing_test}`"
     if validator_summary:
         pr_body += f"\n\n> **Validation:** {validator_summary}"
+    
+    if mermaid_diagram:
+        pr_body += f"\n\n### Execution Flow\n{mermaid_diagram}"
     
     pr = repo.create_pull(
         title=pr_title,
