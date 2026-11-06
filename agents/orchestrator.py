@@ -55,10 +55,11 @@ except ImportError as _e:
     propagate = None
 
 try:
-    from agents.conflict_resolver import check as conflict_check
+    from agents.conflict_resolver import ConflictResolver
+    _conflict_resolver = ConflictResolver()
 except ImportError as _e:
     logger.warning(f"[ARCANE] conflict_resolver not available: {_e}")
-    conflict_check = None
+    _conflict_resolver = None
 
 try:
     from agents.pr_agent import create_pr
@@ -229,9 +230,16 @@ def conflict_checking_node(state: ArcaneState) -> ArcaneState:
     """CONFLICT_CHECKING — detects merge conflicts with main branch."""
     logger.info("[CONFLICT_CHECKING] Verifying merge compatibility")
     try:
-        if conflict_check:
-            updated = conflict_check(state)
-            return {**state, **updated}
+        if _conflict_resolver:
+            result = _conflict_resolver.check(state)
+            # Map Aryan's return keys to our state schema
+            return {
+                **state,
+                "conflict_detected": result.get("conflicts_found", False),
+                "conflict_action": result.get("action", "no_conflict"),
+                "conflict_score": result.get("score", 1.0),
+                "conflict_details": result.get("details", []),
+            }
             
         logger.warning("WARNING: conflict_resolver not available — using mock")
         return {
