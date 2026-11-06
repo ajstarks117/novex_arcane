@@ -43,7 +43,7 @@ except ImportError as _e:
     validate = capture_baseline = None
 
 try:
-    from agents.regression_test_generator import generate as generate_regression_test
+    from agents.regression_test_generator import generate_regression_test
 except ImportError as _e:
     logger.warning(f"[ARCANE] regression_test_generator not available: {_e}")
     generate_regression_test = None
@@ -283,8 +283,17 @@ def creating_pr_node(state: ArcaneState) -> ArcaneState:
     logger.info("[CREATING_PR] Opening pull request")
     try:
         if create_pr:
-            updated = create_pr(state)
-            return {**state, **updated}
+            # Rishi's create_pr takes individual args, not a state dict
+            pr_url = create_pr(
+                repo_full_name=state.get("repo_full_name", ""),
+                base_branch="main",
+                commit_sha=state.get("commit_sha", "unknown"),
+                patch_diff=state.get("patch_diff", ""),
+                failing_test=state.get("failing_test", "unknown_test"),
+                validator_summary=f"Tests passed: {state.get('tests_passed')}, "
+                                  f"Confidence: {state.get('confidence_score', 'N/A')}"
+            )
+            return {**state, "pr_url": pr_url}
             
         logger.warning("WARNING: pr_agent not available — using mock")
         sha = state.get("commit_sha", "unknown")[:7]
