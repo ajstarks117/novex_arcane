@@ -65,10 +65,13 @@ def run_sandbox(repo_url: str, commit_sha: str, patch_diff: Optional[str] = None
             t_clone = time.perf_counter()
             print(f"SANDBOX: repo cloned in {t_clone - t_boot:.2f}s")
 
-        # 3. Checkout the specific commit SHA
+        # 3. Checkout the specific commit SHA — then hard reset for clean state
+        exec_in_container(["git", "fetch", "--all"])
         checkout_res = exec_in_container(["git", "checkout", commit_sha])
         if checkout_res.returncode != 0:
             return {"passed": False, "output": f"Checkout failed: {checkout_res.stderr}", "exit_code": checkout_res.returncode}
+        exec_in_container(["git", "reset", "--hard", commit_sha])
+        exec_in_container(["git", "clean", "-fd"])
 
         # 4. Apply patch if provided
         if patch_diff:

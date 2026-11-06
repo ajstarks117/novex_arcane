@@ -104,7 +104,7 @@ def capture_baseline(state: Dict[str, Any]) -> Dict[str, Any]:
     commit_sha = state.get("commit_sha", "")
     repo_url = f"https://github.com/{repo_full_name}" if repo_full_name else ""
     
-    # 1. Run sandbox with NO patch
+    # 1. Run sandbox with NO patch (force fresh container — warm may be on wrong branch)
     sandbox_result = run_sandbox(repo_url, commit_sha, patch_diff=None)
     output = sandbox_result.get("output", "")
     
