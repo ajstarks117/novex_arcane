@@ -19,12 +19,52 @@ from datetime import datetime
 from typing import TypedDict, Optional, Any
 
 try:
-    from agents.validator_agent import validate, capture_baseline
-    from agents.regression_test_generator import generate_regression_test
+    from agents.analyst_agent import analyze as run_analyst
 except ImportError as _e:
-    logger = logging.getLogger(__name__)
-    logger.warning(f"[ARCANE] Validator imports not available: {_e}")
-    validate = capture_baseline = generate_regression_test = None
+    logger.warning(f"[ARCANE] analyst_agent not available: {_e}")
+    run_analyst = None
+
+try:
+    from agents.git_bisect_agent import run_bisect
+except ImportError as _e:
+    logger.warning(f"[ARCANE] git_bisect_agent not available: {_e}")
+    run_bisect = None
+
+try:
+    from agents.patch_generator import generate_patch as run_patch_generator
+except ImportError as _e:
+    logger.warning(f"[ARCANE] patch_generator not available: {_e}")
+    run_patch_generator = None
+
+try:
+    from agents.validator_agent import validate, capture_baseline
+except ImportError as _e:
+    logger.warning(f"[ARCANE] validator_agent not available: {_e}")
+    validate = capture_baseline = None
+
+try:
+    from agents.regression_test_generator import generate as generate_regression_test
+except ImportError as _e:
+    logger.warning(f"[ARCANE] regression_test_generator not available: {_e}")
+    generate_regression_test = None
+
+try:
+    from agents.cross_file_propagator import propagate
+except ImportError as _e:
+    logger.warning(f"[ARCANE] cross_file_propagator not available: {_e}")
+    propagate = None
+
+try:
+    from agents.conflict_resolver import check as conflict_check
+except ImportError as _e:
+    logger.warning(f"[ARCANE] conflict_resolver not available: {_e}")
+    conflict_check = None
+
+try:
+    from agents.pr_agent import create_pr
+except ImportError as _e:
+    logger.warning(f"[ARCANE] pr_agent not available: {_e}")
+    create_pr = None
 
 from langgraph.graph import StateGraph, END
 
@@ -100,84 +140,162 @@ def idle_node(state: ArcaneState) -> ArcaneState:
     return seeded_state
 
 
-from agents.analyst_agent import analyze as run_analyst
-
 def analyzing_node(state: ArcaneState) -> ArcaneState:
     """ANALYZING — parses failure log to extract test name, file, line, root cause."""
     logger.info("[ANALYZING] Delegating to Analyst Agent")
-    return run_analyst(state)
+    try:
+        if run_analyst:
+            updated = run_analyst(state)
+            return {**state, **updated}
+        logger.warning("WARNING: analyst_agent not available — using mock")
+        return {
+            **state,
+            "failing_test": "test_mock",
+            "failing_file": "mock_file.py",
+            "failing_line": 10,
+            "root_cause_summary": "Mock root cause",
+            "suspected_function": "mock_func"
+        }
+    except Exception as e:
+        state['error'] = str(e)
+        state['retry_count'] = state.get('retry_count', 0) + 1
+        raise
 
 
 def bisecting_node(state: ArcaneState) -> ArcaneState:
     """BISECTING — narrows down the commit that introduced the failure."""
     logger.info("[BISECTING] Running git-bisect analysis")
-    return {
-        **state,
-        "bisect_intent_report": (
-            f"Bisect identified commit {state.get('commit_sha', '???')[:7]} as the "
-            f"first bad commit. Function `{state.get('suspected_function', '?')}` "
-            f"in `{state.get('failing_file', '?')}` was modified."
-        ),
-    }
+    try:
+        if run_bisect:
+            updated = run_bisect(state)
+            return {**state, **updated}
+            
+        logger.warning("WARNING: git_bisect_agent not available — using mock")
+        return {
+            **state,
+            "bisect_intent_report": (
+                f"Bisect identified commit {state.get('commit_sha', '???')[:7]} as the "
+                f"first bad commit. Function `{state.get('suspected_function', '?')}` "
+                f"in `{state.get('failing_file', '?')}` was modified."
+            ),
+        }
+    except Exception as e:
+        state['error'] = str(e)
+        state['retry_count'] = state.get('retry_count', 0) + 1
+        raise
 
-
-from agents.patch_generator import generate_patch as run_patch_generator
 
 def patching_node(state: ArcaneState) -> ArcaneState:
     """PATCHING — generates a code patch to fix the suspected function."""
     logger.info("[PATCHING] Delegating to Patch Generator")
-    return run_patch_generator(state)
+    try:
+        if run_patch_generator:
+            updated = run_patch_generator(state)
+            return {**state, **updated}
+        
+        logger.warning("WARNING: patch_generator not available — using mock")
+        return {
+            **state,
+            "patch_diff": "--- a/mock.py\n+++ b/mock.py\n@@ -1 +1 @@\n-old\n+new",
+            "retry_count": state.get("retry_count", 0)
+        }
+    except Exception as e:
+        state['error'] = str(e)
+        state['retry_count'] = state.get('retry_count', 0) + 1
+        raise
 
 
 def propagating_node(state: ArcaneState) -> ArcaneState:
     """PROPAGATING — checks for cascade / downstream failures."""
     logger.info("[PROPAGATING] Checking downstream impact")
-    return {
-        **state,
-        "cascade_failure": False,
-        "cascade_report": "No downstream modules affected by this patch.",
-    }
+    try:
+        if propagate:
+            updated = propagate(state)
+            return {**state, **updated}
+            
+        logger.warning("WARNING: cross_file_propagator not available — using mock")
+        return {
+            **state,
+            "cascade_failure": False,
+            "cascade_report": "No downstream modules affected by this patch.",
+        }
+    except Exception as e:
+        state['error'] = str(e)
+        state['retry_count'] = state.get('retry_count', 0) + 1
+        raise
 
 
 def conflict_checking_node(state: ArcaneState) -> ArcaneState:
     """CONFLICT_CHECKING — detects merge conflicts with main branch."""
     logger.info("[CONFLICT_CHECKING] Verifying merge compatibility")
-    return {
-        **state,
-        "conflict_detected": False,
-    }
+    try:
+        if conflict_check:
+            updated = conflict_check(state)
+            return {**state, **updated}
+            
+        logger.warning("WARNING: conflict_resolver not available — using mock")
+        return {
+            **state,
+            "conflict_detected": False,
+        }
+    except Exception as e:
+        state['error'] = str(e)
+        state['retry_count'] = state.get('retry_count', 0) + 1
+        raise
 
 
 def validating_node(state: ArcaneState) -> ArcaneState:
     """VALIDATING — applies patch in Docker sandbox and runs full pytest suite."""
     retry = state.get("retry_count", 0)
     logger.info(f"[VALIDATING] Running test suite (attempt {retry + 1})")
-    if validate:
-        updated = validate(state)
-        return {**state, **updated}
-    # Fallback mock if validator not available
-    passed = retry <= 1
-    return {**state, "tests_passed": passed, "confidence_score": 0.95 if passed else 0.30}
+    try:
+        if validate:
+            updated = validate(state)
+            return {**state, **updated}
+            
+        logger.warning("WARNING: validator_agent not available — using mock")
+        passed = retry <= 1
+        return {**state, "tests_passed": passed, "confidence_score": 0.95 if passed else 0.30}
+    except Exception as e:
+        state['error'] = str(e)
+        state['retry_count'] = state.get('retry_count', 0) + 1
+        raise
 
 
 def generating_test_node(state: ArcaneState) -> ArcaneState:
     """GENERATING_TEST — synthesizes a regression test via Claude LLM."""
     logger.info("[GENERATING_TEST] Producing regression test via LLM")
-    if generate_regression_test:
-        updated = generate_regression_test(state)
-        return {**state, **updated}
-    # Fallback mock if generator not available
-    return {**state, "regression_test_code": "def test_placeholder(): pass"}
+    try:
+        if generate_regression_test:
+            updated = generate_regression_test(state)
+            return {**state, **updated}
+            
+        logger.warning("WARNING: regression_test_generator not available — using mock")
+        return {**state, "regression_test_code": "def test_placeholder(): pass"}
+    except Exception as e:
+        state['error'] = str(e)
+        state['retry_count'] = state.get('retry_count', 0) + 1
+        raise
 
 
 def creating_pr_node(state: ArcaneState) -> ArcaneState:
     """CREATING_PR — opens a pull request on GitHub with the patch + test."""
     logger.info("[CREATING_PR] Opening pull request")
-    sha = state.get("commit_sha", "unknown")[:7]
-    return {
-        **state,
-        "pr_url": f"https://github.com/{state.get('repo_full_name', 'org/repo')}/pull/mock-{sha}",
-    }
+    try:
+        if create_pr:
+            updated = create_pr(state)
+            return {**state, **updated}
+            
+        logger.warning("WARNING: pr_agent not available — using mock")
+        sha = state.get("commit_sha", "unknown")[:7]
+        return {
+            **state,
+            "pr_url": f"https://github.com/{state.get('repo_full_name', 'org/repo')}/pull/mock-{sha}",
+        }
+    except Exception as e:
+        state['error'] = str(e)
+        state['retry_count'] = state.get('retry_count', 0) + 1
+        raise
 
 
 def done_node(state: ArcaneState) -> ArcaneState:
