@@ -50,10 +50,11 @@ except ImportError as _e:
     generate_regression_test = None
 
 try:
-    from agents.cross_file_propagator import propagate
+    from agents.cross_file_propagator import CrossFilePropagator
+    _propagator = CrossFilePropagator()
 except ImportError as _e:
     logger.warning(f"[ARCANE] cross_file_propagator not available: {_e}")
-    propagate = None
+    _propagator = None
 
 try:
     from agents.conflict_resolver import ConflictResolver
@@ -265,8 +266,8 @@ def propagating_node(state: ArcaneState) -> ArcaneState:
     """PROPAGATING — checks for cascade / downstream failures."""
     logger.info("[PROPAGATING] Checking downstream impact")
     try:
-        if propagate:
-            updated = propagate(state)
+        if _propagator:
+            updated = _propagator.propagate(state)
             result = {**state, **updated}
             result["agents_used"] = state.get("agents_used", "") + "propagator,"
             return result
