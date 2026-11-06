@@ -1,7 +1,9 @@
 import os
+import subprocess
 import requests
 import json
 from typing import Dict, Any
+from agents.sandbox_runner import run_sandbox
 
 def call_llm(prompt_system: str, prompt_user: str) -> str:
     """
@@ -117,3 +119,77 @@ Return only the function. No class wrapper."""
     state["regression_test_file"] = test_file_path
     
     return state
+
+
+def validate_regression_test(state: dict, retry: int = 0) -> dict:
+    """
+    Validates the generated regression test:
+      1. Syntax check (fast, local)
+      2. Semantic: must FAIL on original broken code
+      3. Semantic: must PASS on patched code
+    Retries generation once with a stricter prompt if any check fails.
+    """
+    test_file_path = state.get("regression_test_file", "")
+    patch_diff     = state.get("patch_diff", "")
+    repo_full_name = state.get("repo_full_name", "")
+    commit_sha     = state.get("commit_sha", "")
+    repo_url       = f"https://github.com/{repo_full_name}" if repo_full_name else ""
+
+    def _fail(reason: str) -> dict:
+        if retry < 1:
+            print(f"REGTEST RETRY — reason: {reason}. Regenerating with stricter prompt...")
+            # Inject failure reason into state for stricter prompt
+            state["regtest_error"] = reason
+            state["regtest_retry_hint"] = (
+                f"Previous attempt failed validation: {reason}. "
+                "Be extra careful. The test MUST fail on the original code and pass on the patched code."
+            )
+            regenerated = generate_regression_test(state)
+            return validate_regression_test(regenerated, retry=1)
+        print(f"REGTEST SKIPPED — second attempt also failed: {reason}")
+        state["regtest_valid"] = False
+        state["regtest_error"] = reason
+        return state
+
+    # ── 1. SYNTAX CHECK ────────────────────────────────────────────────────
+    if not test_file_path or not os.path.isfile(test_file_path):
+        return _fail("SYNTAX_ERROR: test file not found")
+
+    syntax_res = subprocess.run(
+        ["python", "-m", "py_compile", test_file_path],
+        capture_output=True, text=True
+    )
+    if syntax_res.returncode != 0:
+        print(f"REGTEST SYNTAX ERROR:\n{syntax_res.stderr}")
+        return _fail("SYNTAX_ERROR")
+
+    print("REGTEST: syntax check passed")
+
+    # ── 2. SEMANTIC: must FAIL on broken code (no patch) ──────────────────
+    result_broken = run_sandbox(
+        repo_url, commit_sha,
+        patch_diff=None,
+        extra_test_file=test_file_path
+    )
+    if result_broken["exit_code"] == 0:
+        return _fail("TEST_DOES_NOT_CATCH_BUG")
+
+    print("REGTEST: correctly fails on broken code ✓")
+
+    # ── 3. SEMANTIC: must PASS on patched code ─────────────────────────────
+    result_patched = run_sandbox(
+        repo_url, commit_sha,
+        patch_diff=patch_diff,
+        extra_test_file=test_file_path
+    )
+    if result_patched["exit_code"] != 0:
+        return _fail("TEST_FAILS_ON_FIX")
+
+    print("REGTEST: correctly passes on patched code ✓")
+
+    # ── All checks passed ──────────────────────────────────────────────────
+    state["regtest_valid"] = True
+    state.pop("regtest_error", None)
+    print("REGTEST VALID — regression test accepted")
+    return state
+

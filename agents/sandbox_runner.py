@@ -21,7 +21,7 @@ def warm_sandbox(repo_url: str):
         # Pre-clone the repo
         subprocess.run(["docker", "exec", "-i", "arcane-warm", "git", "clone", repo_url, "."], capture_output=True)
 
-def run_sandbox(repo_url: str, commit_sha: str, patch_diff: Optional[str] = None) -> Dict[str, Any]:
+def run_sandbox(repo_url: str, commit_sha: str, patch_diff: Optional[str] = None, extra_test_file: Optional[str] = None) -> Dict[str, Any]:
     """
     Boots a Docker container, clones a repository inside it, applies an optional patch, and runs pytest.
     """
@@ -79,7 +79,16 @@ def run_sandbox(repo_url: str, commit_sha: str, patch_diff: Optional[str] = None
         t_patch = time.perf_counter()
         print(f"SANDBOX: patch applied in {t_patch - t_clone:.2f}s")
 
-        # 5. Run pytest with a 120-second timeout
+        # 5. Inject extra test file into the container if provided
+        if extra_test_file and os.path.isfile(extra_test_file):
+            dest_name = os.path.basename(extra_test_file)
+            subprocess.run(
+                ["docker", "cp", extra_test_file, f"{container_name}:/sandbox/tests/{dest_name}"],
+                capture_output=True
+            )
+            print(f"SANDBOX: injected extra test file {dest_name}")
+
+        # 6. Run pytest with a 120-second timeout
         try:
             pytest_res = exec_in_container(["env", "PYTHONPATH=.", "pytest", "-v"], timeout=120)
             t_pytest = time.perf_counter()
