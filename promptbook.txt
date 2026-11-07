@@ -1,0 +1,1159 @@
+ARCANE · TEAM BAHADUR
+
+ARYAN'S PROMPT BOOK — AST + MEMORY LEAD
+
+ARYAN'S CURSOR / ANTIGRAVITY
+
+PROMPT BOOK
+
+
+
+AST + Memory Lead
+
+GPU Node  ·  Llama 3 Fallback
+
+tree-sitter  ·  ChromaDB
+
+ARCANE · Team Bahadur
+
+
+
+YOUR DELIVERABLES
+
+
+
+Phase 0  →  Demo repo setup
+
+Phase 1  →  tree-sitter AST parser
+
+Phase 2  →  Semantic Conflict Resolver
+
+Phase 3a →  Cross-File AST Propagator
+
+Phase 3b →  ChromaDB Patch Memory
+
+HOW TO USE THIS BOOK
+
+
+
+Each section = one Cursor prompt
+
+Paste prompt verbatim into Cursor
+
+Run verification before committing
+
+Fix errors with provided solutions
+
+Tell teammates before moving on
+
+
+
+⚡  IRON RULES — READ BEFORE HOUR 0
+
+
+
+Git commit every 20–30 minutes — NO EXCEPTIONS. Your branch: feat/aryan-ast
+
+Never commit to main. Push to feat/aryan-ast only.
+
+Your GPU runs Ollama (Llama 3) as fallback when Claude API is down.
+
+Phase checkpoints are MANDATORY — all four members must confirm before you move.
+
+If something breaks: STOP → ANNOUNCE → ISOLATE → TAG WORKING STATE → FIX.
+
+
+
+
+PHASE 0  —  PRE-BUILD SETUP
+
+Hour 0 → 0:30  |  Demo Repo & Environment
+
+
+
+PROMPT 0.1  —  Demo Repo Structure (You Lead This)
+
+Open Cursor / Antigravity in your project workspace and paste this exact prompt:
+
+
+
+🤖  CURSOR PROMPT 0.1
+
+Create a new GitHub repository called 'arcane-demo-repo'.
+
+Inside it, generate the following Python backend structure:
+
+
+
+  auth.py     - contains a function 'validate_user(username, password)'
+
+  api.py      - imports and calls 'validate_user' from auth
+
+  middleware.py - imports and calls 'validate_user' from auth
+
+  tests/test_auth.py      - 5 passing tests for validate_user
+
+  tests/test_api.py       - 3 passing tests for api endpoints
+
+  tests/test_middleware.py - 2 passing tests for middleware
+
+  .github/workflows/ci.yml - GitHub Actions pytest on every push
+
+  .arcane_config.json     - { 'good_commit': 'HEAD~3' }
+
+
+
+IMPORTANT: All tests must pass on the main branch.
+
+Then create a separate branch 'bug-1' where auth.py's validate_user
+
+signature is changed to 'validate_user(user, pwd)' — breaking callers.
+
+Create a second branch 'bug-2' with a similar but distinct null-check bug.
+
+
+
+✅  VERIFICATION CHECKS
+
+☐  Demo repo pushed to GitHub and visible at the URL you share with the team
+
+☐  GitHub Actions CI runs green on main branch — all 10 tests pass
+
+☐  When bug-1 branch is pushed, CI turns red — this is the intended behavior
+
+☐  Webhook placeholder is set on the demo repo (will go live in Phase 1)
+
+☐  JSON file .arcane_config.json exists with 'good_commit' key
+
+
+
+⚠️  COMMON ERRORS & FIXES
+
+✖  GitHub Actions CI not triggering on push
+
+→  Check .github/workflows/ci.yml indentation. Must live exactly at that path. Validate YAML at yaml.lint.com before committing.
+
+✖  Tests pass on bug-1 branch (bug not working as expected)
+
+→  Confirm the signature change is real — rename 'username' to 'user' AND 'password' to 'pwd'. Callers still use old names, so it breaks on import.
+
+✖  Webhook 404 — FastAPI not ready yet
+
+→  This is expected in Phase 0. Set the URL in GitHub webhook settings now, but actual traffic fires in Phase 1 when Rishi's server is live.
+
+
+
+🔀  GIT COMMIT — Run after this passes verification
+
+git commit -m "chore(demo-repo): initial auth.py api.py middleware.py structure committed"
+
+git commit -m "chore(demo-repo): pytest test suite with 10 baseline tests - all passing"
+
+git commit -m "chore(demo-repo): GitHub Actions CI workflow configured"
+
+git commit -m "chore(demo-repo): bug-1 branch created with signature change pre-planted"
+
+
+
+📣  TELL YOUR TEAMMATES
+
+→  RISHI: Demo repo URL is live. Webhook target URL is set. Point your FastAPI server at it when Step 1.1 is ready.
+
+→  AJINKYA: .arcane_config.json is in the demo repo root. good_commit points to HEAD~3. Update if you need a different bisect window.
+
+→  AJAYA: The 10 baseline tests are in tests/. All pass on main. Your Docker sandbox should clone main and run pytest there to establish baseline.
+
+→  ALL: bug-1 and bug-2 branches are pre-planted and MUST NOT be pushed to main until demo steps 2 and 10.
+
+
+
+
+PHASE 1  —  CORE LOOP SPRINT
+
+Hour 0:30 → 6:00  |  tree-sitter AST Parser
+
+
+
+PROMPT 1.1  —  tree-sitter Setup & Basic Python Parse
+
+Your first deliverable in Phase 1 is proving tree-sitter can parse a Python file into an AST you can traverse.
+
+
+
+🤖  CURSOR PROMPT 1.1
+
+Install tree-sitter and tree-sitter-python.
+
+Create a file 'ast_parser.py' in the agents/ directory.
+
+
+
+It should expose a function:
+
+  parse_python_file(filepath: str) -> dict
+
+
+
+The function must:
+
+  1. Read the file at filepath
+
+  2. Parse it with tree-sitter Python grammar
+
+  3. Return a dict with keys:
+
+       'functions': list of function names found
+
+       'imports':   list of module names imported
+
+       'classes':   list of class names found
+
+       'tree':      the raw tree-sitter tree object (for later use)
+
+
+
+Add a __main__ block that parses agents/ast_parser.py itself and prints the result.
+
+Write 2 unit tests in tests/test_ast.py confirming the output for a sample Python snippet.
+
+
+
+✅  VERIFICATION CHECKS
+
+☐  pip install tree-sitter tree-sitter-python completes without error on your machine
+
+☐  python agents/ast_parser.py runs and prints a dict with functions/imports/classes keys
+
+☐  tests/test_ast.py passes: pytest tests/test_ast.py returns exit code 0
+
+☐  The function correctly identifies 'validate_user' in the demo repo's auth.py
+
+
+
+⚠️  COMMON ERRORS & FIXES
+
+✖  tree-sitter Python grammar not found / import error
+
+→  Run: pip install tree-sitter==0.21.3 tree-sitter-python==0.21.0 — pin exact versions. Share the pinned version with the team in group chat.
+
+✖  Parser returns empty functions list for a file that has functions
+
+→  Check node type name — use 'function_definition' (not 'function'). Print tree.root_node.children to see actual node types returned by tree-sitter.
+
+✖  UnicodeDecodeError when reading file
+
+→  Open with: open(filepath, 'r', encoding='utf-8', errors='replace'). Never use open(filepath, 'rb') for tree-sitter — it expects a string.
+
+
+
+🔀  GIT COMMIT — Run after this passes verification
+
+git commit -m "chore(setup): requirements.txt updated with tree-sitter 0.21 - verified install"
+
+git commit -m "feat(ast): tree-sitter Python parser init - basic parse working"
+
+git commit -m "test(ast): unit tests for parse_python_file - passing"
+
+
+
+📣  TELL YOUR TEAMMATES
+
+→  RISHI: tree-sitter is installed and pinned to 0.21.x in requirements.txt. Pull and re-install. No action needed from you on AST.
+
+→  AJINKYA: AST parser is ready. When your Analyst Agent needs to identify failing_file, it can now call parse_python_file() to get structure. I'll share the function signature.
+
+→  AJAYA: No Docker changes needed for this. The AST parsing runs on my machine, not inside the sandbox.
+
+
+
+PROMPT 1.2  —  AST Diff (Two Versions of a File)
+
+Now extend the parser to diff two versions of the same file at the AST node level — this is the foundation of the Conflict Resolver.
+
+
+
+🤖  CURSOR PROMPT 1.2
+
+Create 'ast_differ.py' in agents/.
+
+
+
+Expose a function:
+
+  ast_diff(file_a: str, file_b: str) -> dict
+
+
+
+Where file_a and file_b are file paths (or raw Python source strings).
+
+The function must return a dict with:
+
+  'added_functions':   functions present in file_b but not file_a
+
+  'removed_functions': functions present in file_a but not file_b
+
+  'modified_functions': functions whose body text changed between versions
+
+  'added_imports':     new imports in file_b
+
+  'removed_imports':   imports dropped in file_b
+
+
+
+Use tree-sitter to parse both files. Compare function node texts.
+
+Ignore whitespace-only differences. Ignore comment-only changes.
+
+Write 3 unit tests in tests/test_ast_diff.py for: pure addition, pure deletion, modification.
+
+
+
+✅  VERIFICATION CHECKS
+
+☐  ast_diff(auth_v1.py, auth_v2.py) correctly shows 'validate_user' as modified when signature changes
+
+☐  Whitespace-only differences return empty modified_functions list
+
+☐  tests/test_ast_diff.py passes — all 3 tests green
+
+☐  The diff output is a serializable dict (no tree-sitter objects inside it)
+
+
+
+⚠️  COMMON ERRORS & FIXES
+
+✖  Modified functions list is always empty even when code changed
+
+→  tree-sitter node text includes whitespace. Strip and normalize before comparing: node.text.decode('utf8').strip(). Do not compare raw bytes.
+
+✖  Comment changes show as modifications
+
+→  Filter comment nodes before building function text. Check node.type == 'comment' and skip those children when reconstructing function body text.
+
+✖  AST diff produces error on file with syntax error
+
+→  tree-sitter does partial parsing — it will not crash on syntax errors. Check tree.root_node.has_error. If True, log a warning and return partial result.
+
+
+
+🔀  GIT COMMIT — Run after this passes verification
+
+git commit -m "feat(ast): ast_differ.py - node-level diff between two Python file versions"
+
+git commit -m "test(ast): ast_diff unit tests - add/remove/modify cases passing"
+
+
+
+📣  TELL YOUR TEAMMATES
+
+→  AJINKYA: ast_differ is ready. When the Conflict Resolver fires, it will call ast_diff() on the two conflicting file versions. The output dict is JSON-serializable.
+
+→  RISHI: No action needed. Mermaid diagram generation will use the diff output in Phase 2 — you'll consume the 'modified_functions' key.
+
+→  AJAYA: No sandbox changes needed. AST diffing runs on my GPU machine.
+
+
+
+
+PHASE 2  —  WOW FEATURES SPRINT
+
+Hour 6:00 → 14:00  |  Semantic Conflict Resolver
+
+
+
+PROMPT 2.1  —  Conflict Marker Detector
+
+Before resolving anything, ARCANE must detect that a conflict exists. Build the detector first, then the resolver.
+
+
+
+🤖  CURSOR PROMPT 2.1
+
+Create 'conflict_detector.py' in agents/.
+
+
+
+Expose a function:
+
+  detect_conflicts(filepath: str) -> list[dict]
+
+
+
+Each dict in the list represents one conflict block and must have:
+
+  'ours':   string — the code between <<<<<<< and =======
+
+  'theirs': string — the code between ======= and >>>>>>>
+
+  'start_line': int — line where <<<<<< appears
+
+  'end_line':   int — line where >>>>>>> appears
+
+  'file':   str — filepath
+
+
+
+If no conflicts found, return an empty list.
+
+Write 2 unit tests: one with a real conflict block, one without.
+
+
+
+✅  VERIFICATION CHECKS
+
+☐  detect_conflicts() returns a non-empty list for a file with <<<<<< markers
+
+☐  detect_conflicts() returns [] for a clean Python file with no markers
+
+☐  The 'ours' and 'theirs' strings are valid Python snippets parseable by tree-sitter
+
+☐  tests/test_conflict_detector.py passes — both tests green
+
+
+
+⚠️  COMMON ERRORS & FIXES
+
+✖  Regex misses multi-line conflict blocks
+
+→  Use re.DOTALL flag when matching. Split on ======= after extracting the full block between <<<<<< and >>>>>>>.
+
+✖  'ours' string contains the <<<<<<< header line itself
+
+→  Strip the first line of the match — it contains the branch name. Only keep lines after the first newline in the ours block.
+
+
+
+🔀  GIT COMMIT — Run after this passes verification
+
+git commit -m "feat(conflict): conflict_detector.py - scans for git conflict markers in files"
+
+git commit -m "test(conflict): unit tests for conflict detection - passing"
+
+
+
+📣  TELL YOUR TEAMMATES
+
+→  ALL: conflict_detector.py is live. It returns a list of {ours, theirs, start_line, end_line, file} dicts. Any agent can call it to check if a file has conflicts before processing.
+
+→  AJINKYA: When the LangGraph state machine reaches CONFLICT_CHECKING, it should call detect_conflicts() on the patched files before passing to the resolver.
+
+
+
+PROMPT 2.2  —  Intent Inferrer (LLM Call)
+
+The intent inferrer is the brain of the Conflict Resolver. It takes both commit messages and changed AST blocks, and asks the LLM which change represents the true intent.
+
+
+
+🤖  CURSOR PROMPT 2.2
+
+Create 'intent_inferrer.py' in agents/.
+
+
+
+Expose a function:
+
+  infer_intent(ours_code: str, theirs_code: str,
+
+               ours_commit_msg: str, theirs_commit_msg: str) -> dict
+
+
+
+The function must call the Claude API (claude-sonnet-4-20250514) with a prompt that:
+
+  - Shows both code versions side by side
+
+  - Shows both commit messages
+
+  - Asks: which change better represents the intended system behavior?
+
+  - Asks: are these changes compatible or mutually exclusive?
+
+  - Instructs the LLM to return JSON only: no preamble, no markdown fences
+
+
+
+Expected JSON response shape:
+
+  { 'winner': 'ours' | 'theirs' | 'merge',
+
+    'reasoning': 'one sentence explanation',
+
+    'compatible': true | false,
+
+    'confidence': 0.0 to 1.0 }
+
+
+
+If ANTHROPIC_API_KEY is missing or API returns error, fall back to Ollama:
+
+  POST http://localhost:11434/api/generate with model='llama3'
+
+
+
+Write 1 unit test using a mock LLM response.
+
+
+
+✅  VERIFICATION CHECKS
+
+☐  infer_intent() returns a valid dict with winner/reasoning/compatible/confidence keys
+
+☐  confidence is a float between 0.0 and 1.0 — not a string, not None
+
+☐  Ollama fallback path activates when ANTHROPIC_API_KEY env var is empty
+
+☐  Mock LLM test passes — function handles JSON parse correctly
+
+
+
+⚠️  COMMON ERRORS & FIXES
+
+✖  LLM returns malformed JSON (markdown fences, preamble text)
+
+→  Strip markdown fences before parsing: text.replace('```json','').replace('```','').strip(). If still invalid, retry once with stricter prompt: 'Return ONLY the JSON object.'
+
+✖  confidence key is a string ('0.87') not a float
+
+→  Cast after parsing: result['confidence'] = float(result['confidence']). Add this line defensively before returning.
+
+✖  Claude API returns 429 rate limit mid-hackathon
+
+→  Switch to Ollama instantly. Set ANTHROPIC_API_KEY='' in your shell temporarily. Ollama on your GPU should handle all inference. Alert Ajinkya so he also switches the main LLM path.
+
+
+
+🔀  GIT COMMIT — Run after this passes verification
+
+git commit -m "feat(conflict): intent_inferrer.py - LLM call with both commit messages and blocks"
+
+git commit -m "feat(conflict): Ollama fallback path added to intent inferrer"
+
+
+
+📣  TELL YOUR TEAMMATES
+
+→  AJINKYA: intent_inferrer is ready. It takes (ours_code, theirs_code, ours_msg, theirs_msg) and returns a dict. Plug this into the CONFLICT_CHECKING LangGraph node. The confidence float maps to your gating thresholds.
+
+→  RISHI: No action needed. The conflict story is mine to own. You consume the final resolution, not intermediate steps.
+
+
+
+PROMPT 2.3  —  Confidence Scorer & Auto-Resolver
+
+This is the decision engine — it gates on confidence thresholds and either writes the merged file or posts a GitHub escalation comment.
+
+
+
+🤖  CURSOR PROMPT 2.3
+
+Create 'confidence_scorer.py' and 'auto_resolver.py' in agents/.
+
+
+
+confidence_scorer.py — expose:
+
+  score_resolution(intent_result: dict, ast_diff_result: dict) -> float
+
+  Logic:
+
+    base_score = intent_result['confidence']
+
+    if ast_diff_result['modified_functions'] has 0 items: penalty = 0.05
+
+    if ast_diff_result has >3 modified_functions: penalty = 0.10
+
+    if intent_result['compatible'] is True: bonus = 0.05
+
+    final = clamp(base_score - penalty + bonus, 0.0, 1.0)
+
+  Return the final float.
+
+
+
+auto_resolver.py — expose:
+
+  resolve(conflict: dict, intent_result: dict, score: float,
+
+          github_repo, commit_sha: str) -> dict
+
+  If score > 0.85:
+
+    Write the winning code version to the file in-place
+
+    Return { 'action': 'auto_resolved', 'score': score }
+
+  If score < 0.60:
+
+    Post a GitHub issue comment using PyGitHub with:
+
+      - Both code versions
+
+      - LLM reasoning
+
+      - Confidence score
+
+      - Tag both commit authors
+
+    Return { 'action': 'escalated', 'score': score }
+
+  If 0.60 <= score <= 0.85:
+
+    Return { 'action': 'needs_review', 'score': score }
+
+
+
+✅  VERIFICATION CHECKS
+
+☐  score_resolution() returns a float — run with a mock intent_result and verify it is between 0.0 and 1.0
+
+☐  Auto-resolve path writes valid Python to the file — run python -m py_compile on the output
+
+☐  Escalation comment is posted to GitHub correctly for a low-confidence pre-planted scenario
+
+☐  The pre-planted demo conflict scores above 0.85 (same function, clear intent match)
+
+
+
+⚠️  COMMON ERRORS & FIXES
+
+✖  Confidence score always returns exactly 0.85 regardless of inputs
+
+→  You have a hardcoded value somewhere. Log raw base_score, penalty, and bonus separately before computing final. Verify intent_result['confidence'] is actually varying.
+
+✖  Auto-resolved file is not valid Python (syntax error after merge)
+
+→  After writing the resolved file, run python -m py_compile agents/resolved_output.py. If it fails, the LLM's 'winner' code may have trailing conflict markers — strip any <<< === >>> lines before writing.
+
+✖  GitHub escalation comment fails with 403
+
+→  GitHub PAT needs 'repo' scope. Regenerate at GitHub Settings → Developer Settings → Personal Access Tokens. Never commit the token.
+
+
+
+🔀  GIT COMMIT — Run after this passes verification
+
+git commit -m "feat(conflict): confidence_scorer.py - overlap degree + intent clarity scoring"
+
+git commit -m "feat(conflict): auto_resolver.py - writes merged file for high confidence cases"
+
+git commit -m "feat(conflict): escalation_writer.py - GitHub comment with evidence for low confidence"
+
+git commit -m "test(conflict): pre-planted conflict in demo repo - auto-resolve path tested"
+
+
+
+📣  TELL YOUR TEAMMATES
+
+→  AJINKYA: Conflict Resolver is wired. It returns { action: 'auto_resolved'|'escalated'|'needs_review', score: float }. In your LangGraph CONFLICT_CHECKING node, use action to decide next state.
+
+→  RISHI: For the demo, I will pre-plant a conflict that scores above 0.85. When you show Step 6 in the demo script, you will see 'auto_resolved' in the dashboard. No manual intervention needed.
+
+→  AJAYA: Auto-resolved files are syntactically valid — py_compile passes. Your sandbox can safely run pytest against them.
+
+
+
+
+PHASE 3  —  ADVANCED FEATURES
+
+Hour 14:00 → 20:00  |  AST Propagator + ChromaDB Memory
+
+
+
+PROMPT 3.1  —  Dependency Graph Builder
+
+The Cross-File AST Propagator starts here — build the graph first, then the caller finder, then the multi-file patcher.
+
+
+
+🤖  CURSOR PROMPT 3.1
+
+Create 'dep_graph_builder.py' in agents/.
+
+
+
+Expose a function:
+
+  build_dep_graph(repo_path: str) -> dict
+
+
+
+It must:
+
+  1. Walk all .py files in repo_path recursively
+
+  2. For each file, parse with tree-sitter and extract:
+
+       - All function definitions
+
+       - All 'from X import Y' and 'import X' statements
+
+  3. Return a graph as a dict:
+
+     {
+
+       'file_a.py': {
+
+         'functions': ['validate_user', 'logout'],
+
+         'imports': ['api', 'middleware'],
+
+         'imported_by': ['api.py', 'middleware.py']
+
+       },
+
+       ...
+
+     }
+
+
+
+Scope: single-depth only. Do not recurse into callers of callers.
+
+Write 2 unit tests against the demo repo structure.
+
+
+
+✅  VERIFICATION CHECKS
+
+☐  build_dep_graph() correctly identifies api.py and middleware.py as importers of auth.py
+
+☐  The 'imported_by' list for auth.py contains both api.py and middleware.py
+
+☐  Function runs in under 5 seconds on the demo repo (10 files)
+
+☐  Unit tests pass — graph structure correct for known demo repo layout
+
+
+
+⚠️  COMMON ERRORS & FIXES
+
+✖  tree-sitter import finder misses 'from auth import validate_user' style imports
+
+→  Check for both 'import_statement' and 'import_from_statement' node types. Print root_node.children to confirm which types tree-sitter uses for your grammar version.
+
+✖  Graph is built but 'imported_by' is always empty
+
+→  You are populating 'imports' but not inverting the graph. After building all entries, do a second pass: for each file f, for each import i in f['imports'], add f to graph[i]['imported_by'].
+
+
+
+🔀  GIT COMMIT — Run after this passes verification
+
+git commit -m "feat(ast): dep_graph_builder.py - tree-sitter scans all .py files for import statements"
+
+
+
+📣  TELL YOUR TEAMMATES
+
+→  RISHI: dep_graph is ready. When the PR Agent assembles the PR body in Phase 3, it will include the 'files changed' section pulled from this graph. I'll share the function.
+
+→  AJINKYA: build_dep_graph() is available. The LangGraph PROPAGATING state should call it to find caller files before generating patches for them.
+
+→  AJAYA: No sandbox changes. Graph runs on my machine, not inside Docker.
+
+
+
+PROMPT 3.2  —  Caller Finder & Multi-File Patcher
+
+
+
+🤖  CURSOR PROMPT 3.2
+
+Create 'caller_finder.py' and 'multi_file_patcher.py' in agents/.
+
+
+
+caller_finder.py — expose:
+
+  find_callers(changed_function: str, dep_graph: dict) -> list[str]
+
+  Returns list of file paths that call changed_function.
+
+  Search the dep_graph for files that import the module containing changed_function.
+
+
+
+multi_file_patcher.py — expose:
+
+  generate_caller_patches(callers: list[str], original_signature: str,
+
+                           new_signature: str, llm_client) -> list[dict]
+
+  For each caller file:
+
+    1. Read the file content
+
+    2. Prompt the LLM: 'Update all calls to {original_signature} to use
+
+       {new_signature} in this file. Return only the updated file content.'
+
+    3. Compute a unified diff between original and updated
+
+    4. Return list of { 'file': path, 'patch': diff_string }
+
+
+
+Patches must be applied in order: changed file first, then callers.
+
+Write 1 integration test: change validate_user signature, verify api.py patch generated.
+
+
+
+✅  VERIFICATION CHECKS
+
+☐  find_callers('validate_user', graph) returns ['api.py', 'middleware.py'] for the demo repo
+
+☐  generate_caller_patches() returns 2 patch dicts for the demo scenario
+
+☐  All patches are valid unified diffs (apply with patch -p1 without error)
+
+☐  Full test suite passes after all three patches applied together in sandbox
+
+
+
+⚠️  COMMON ERRORS & FIXES
+
+✖  Multi-file patching creates conflicting changes between files
+
+→  Apply patches sequentially, not simultaneously. Apply auth.py patch first, verify it, then apply api.py, then middleware.py. Abort on first failure.
+
+✖  LLM returns entire file instead of just changed lines
+
+→  This is acceptable — compute the diff in Python using difflib.unified_diff() after receiving the full updated file. Only store the diff, not the full file.
+
+✖  Propagation takes too long (>90 seconds) — could stall demo
+
+→  Pre-compute build_dep_graph() during Phase 0 demo setup and cache the result to disk as dep_graph.json. Only re-compute if repo changes.
+
+
+
+🔀  GIT COMMIT — Run after this passes verification
+
+git commit -m "feat(ast): caller_finder.py - identifies files calling the changed function"
+
+git commit -m "feat(ast): multi_file_patcher.py - generates patch for each caller file"
+
+git commit -m "feat(ast): patch bundle - all file patches combined into single PR"
+
+git commit -m "test(ast): demo repo test - auth.py patch propagates to api.py and middleware.py"
+
+
+
+📣  TELL YOUR TEAMMATES
+
+→  AJINKYA: multi_file_patcher is ready. It returns a list of {file, patch} dicts. In the PROPAGATING LangGraph state, pass this list to Ajaya's Validator. All patches go into the sandbox together.
+
+→  AJAYA: You will receive a list of patches (not just one). Apply them in order — auth.py first, then api.py, then middleware.py — before running pytest. Confirm cascade detection handles multi-file scenarios.
+
+→  RISHI: The PR body needs to show all 3 files changed. The patch bundle includes a 'file' key for each. Use that to build the 'Files Changed' section of the PR.
+
+
+
+PROMPT 3.3  —  ChromaDB Memory Layer
+
+The memory layer is what makes ARCANE learn — every successful patch is stored, and similar failures get solved in seconds.
+
+
+
+🤖  CURSOR PROMPT 3.3
+
+Create 'chroma_memory.py' in agents/.
+
+
+
+Install: pip install chromadb sentence-transformers
+
+
+
+Expose these functions:
+
+
+
+  init_memory(persist_path: str) -> chromadb.Client
+
+    Creates or loads a ChromaDB collection named 'arcane_patches'
+
+    Uses an absolute path for persist_directory
+
+
+
+  store_patch(client, error_log: str, root_cause: str,
+
+              patch_diff: str, test_file: str, commit_sha: str) -> None
+
+    Embeds a text representation: f'{error_log} || {root_cause}'
+
+    Stores in ChromaDB with metadata: {patch_diff, test_file, commit_sha, date}
+
+
+
+  query_memory(client, error_log: str, threshold=0.85) -> dict | None
+
+    Embeds the error_log and queries top-1 match
+
+    If distance score >= threshold: return the matched metadata dict
+
+    Else: return None
+
+
+
+Write 2 tests: store then query (should match), query with unrelated log (should return None).
+
+Pre-populate with 1 patch from the demo repo dry run before Hour 20.
+
+
+
+✅  VERIFICATION CHECKS
+
+☐  ChromaDB collection persists across process restarts — kill and rerun Python, data still there
+
+☐  store_patch() then query_memory() returns the stored patch for a similar error log
+
+☐  The second demo bug (bug-2 branch) triggers a memory hit in under 3 seconds
+
+☐  query_memory() returns None for a completely unrelated error log
+
+☐  PR comment for a memory hit includes: 'Pattern matched from memory — [date] — [file]'
+
+
+
+⚠️  COMMON ERRORS & FIXES
+
+✖  ChromaDB collection is empty after Python process restart
+
+→  persist_directory must be an ABSOLUTE path. Use os.path.abspath('./chroma_data') not just './chroma_data'. Call client.persist() after every store_patch() call.
+
+✖  SentenceTransformer model download fails during hackathon
+
+→  Pre-download in Phase 0: python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')". Model caches to ~/.cache/huggingface/ and works offline after.
+
+✖  ChromaDB returns wrong match — false positive on unrelated error
+
+→  Increase threshold to 0.90. The two demo bugs must be similar enough to match each other but distant from other logs. Verify by logging raw distance scores during testing.
+
+✖  query_memory() crashes if collection is empty (no patches stored)
+
+→  Wrap the query in try/except. If ChromaDB raises an exception or returns no results, return None gracefully. The Analyst Agent must handle None without crashing.
+
+
+
+🔀  GIT COMMIT — Run after this passes verification
+
+git commit -m "feat(chromadb): chroma_memory.py - collection created, add_patch and query_patch methods"
+
+git commit -m "feat(chromadb): embedding pipeline - error signature + patch embedded on success"
+
+git commit -m "feat(chromadb): query path - analyst agent queries on new failure before LLM call"
+
+git commit -m "feat(chromadb): memory hit path - matched patch adapted and applied directly"
+
+git commit -m "chore(chromadb): pre-populated with 1 patch from dry run for demo memory hit"
+
+
+
+📣  TELL YOUR TEAMMATES
+
+→  AJINKYA: ChromaDB is ready. In the LangGraph ANALYZING state, call query_memory() before the LLM Analyst call. If it returns a match dict, pass it directly to the Patch Generator and skip LLM analysis. This is the fast path for the Step 10 memory hit demo.
+
+→  RISHI: When ChromaDB returns a match, the PR comment must include 'Pattern matched from memory — [date] — [file]'. I'll call query_memory() result's metadata for those values.
+
+→  AJAYA: The memory hit path skips the Validator first check. The matched patch is still applied in the sandbox and pytest is still run before a PR is created. No change to your validation logic.
+
+
+
+
+PHASE 4  —  DEMO PREP
+
+Hour 20:00 → 22:00  |  Aryan's Cues & Contingency
+
+
+
+ARYAN'S DEMO STEPS (Steps 6 & 10)
+
+Step
+
+Action
+
+You Say
+
+Expected Output
+
+6
+
+Cross-File Propagation
+
+Point to dashboard showing api.py + middleware.py being patched
+
+'ARCANE didn't just fix auth.py — it found every caller and patched them all automatically.'
+
+Dashboard: 'Propagating to api.py, middleware.py…'
+
+10
+
+Trigger bug-2 branch push
+
+Show memory hit in dashboard
+
+'We've seen a pattern like this before. ARCANE matched it from memory in under 3 seconds.'
+
+Dashboard: 'Pattern matched from memory — [date]' within 3 seconds
+
+
+
+CONTINGENCY PLAN — If Features Are Unstable at Hour 18
+
+Feature
+
+What To Say + Fallback
+
+Cross-File AST unstable
+
+Say: 'Single-depth propagation implemented — demo constrained to single file for stability.'
+
+Show: auth.py patch only. Slide shows the full architecture.
+
+ChromaDB memory unstable
+
+Pre-populate with a hardcoded match and trigger query manually via script.
+
+3-second result is achievable even with hardcoded query path.
+
+Conflict Resolver unstable
+
+Show architecture diagram and confidence scoring table — no live demo.
+
+Say: 'The resolver is built — we'll show the architecture here.'
+
+
+
+🔀  GIT COMMIT — Run after this passes verification
+
+git commit -m "chore(demo): final demo run dry-run - all steps verified working"
+
+git commit -m "chore(demo): chromadb pre-populated with dry run patch for memory hit"
+
+git commit -m "fix(demo): any bugs found during dry run - committed before Hour 22"
+
+
+
+📣  TELL YOUR TEAMMATES
+
+→  ALL: I own Steps 6 and 10 in the demo. Rishi sets up demo cues. Ajinkya drives Steps 2–5. I take over at Step 6 and Step 10. I know my lines.
+
+→  AJINKYA: Confirm LangGraph PROPAGATING state calls my multi_file_patcher and shows both api.py + middleware.py in dashboard output.
+
+→  RISHI: Dashboard must show file names being propagated in Step 6. Confirm the /api/status endpoint includes propagation file list.
+
+
+
+
+QUICK REFERENCE CARD
+
+Aryan's Commands, Thresholds & Commit Scopes
+
+
+
+Key Commands
+
+# tree-sitter parse test
+
+python agents/ast_parser.py
+
+ 
+
+# Run your tests
+
+pytest tests/test_ast.py tests/test_ast_diff.py tests/test_conflict_detector.py -v
+
+ 
+
+# ChromaDB persist check
+
+python -c "import chromadb; c=chromadb.PersistentClient('./chroma_data'); print(c.list_collections())"
+
+ 
+
+# Syntax check auto-resolved file
+
+python -m py_compile agents/resolved_output.py
+
+ 
+
+# Pre-download embedding model (do this in Phase 0!)
+
+python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+
+ 
+
+# Your git branch
+
+git checkout -b feat/aryan-ast
+
+git push origin feat/aryan-ast
+
+
+
+Confidence Thresholds
+
+Score
+
+Action
+
+What Happens
+
+> 0.85
+
+AUTO-RESOLVE
+
+Write merged file. Continue pipeline.
+
+0.60 – 0.85
+
+NEEDS REVIEW
+
+Return to LangGraph. Flag in state dict. Escalate if retry fails.
+
+< 0.60
+
+ESCALATE
+
+Post GitHub issue comment. Tag both authors. Stop auto-merge.
+
+
+
+Commit Scope Tags (Aryan's Scopes)
+
+Tag
+
+Example Commit
+
+feat(ast)
+
+feat(ast): tree-sitter dep graph - single depth callers mapped
+
+feat(conflict)
+
+feat(conflict): confidence scoring logic - threshold 85/60 working
+
+feat(chromadb)
+
+feat(chromadb): vector store init - first patch embedded successfully
+
+fix(ast)
+
+fix(ast): caller finder missed from-import style - fixed
+
+test(ast)
+
+test(ast): dep graph builder unit tests - all passing
+
+chore(demo-repo)
+
+chore(demo-repo): bug-2 branch updated - null check pattern confirmed
+
+
+
+ARCANE doesn't just fix bugs.
+
+It travels back in time to find them.
