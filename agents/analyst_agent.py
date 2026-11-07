@@ -1,7 +1,9 @@
 import json
 import logging
+import os
 from typing import Dict, Any
 from agents.llm_client import call_llm
+from agents.chroma_memory import init_memory, query_memory
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +29,36 @@ def analyze(state: Dict[str, Any]) -> Dict[str, Any]:
             "root_cause_summary": "Incorrect validation of JWT expiration timestamp leading to premature session termination.",
             "suspected_function": "validate_token"
         }
+
+    # 🧠 CHROMADB MEMORY FAST PATH
+    try:
+        db_path = os.environ.get('CHROMADB_PATH', './chroma_data')
+        client = init_memory(db_path)
+        memory_match = query_memory(client, failure_log)
+        
+        if memory_match:
+            logger.info(f"[Analyst] 🧠 CHROMA MEMORY HIT! Bypassing LLM analysis. Matched commit: {memory_match.get('commit_sha')}")
+            
+            patch = memory_match.get("patch_diff", "")
+            failing_file = "unknown_file.py"
+            # Extract filename from patch header (e.g., --- a/api/auth.py)
+            for line in patch.splitlines():
+                if line.startswith("--- a/"):
+                    failing_file = line[6:].strip()
+                    break
+
+            return {
+                **state,
+                "memory_hit": memory_match, # Store for PR agent
+                "failing_test": memory_match.get("test_file", "unknown_test"),
+                "failing_file": failing_file,
+                "failing_line": 0,
+                "root_cause_summary": memory_match.get("root_cause", ""),
+                "patch_diff": patch,
+                "fast_forward_patch": True
+            }
+    except Exception as e:
+        logger.error(f"[Analyst] ChromaDB memory check failed: {e}")
 
     system_prompt = (
         "You are an expert CI/CD failure analyst. Analyze the provided test failure log "

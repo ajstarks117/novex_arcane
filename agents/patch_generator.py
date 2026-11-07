@@ -50,6 +50,14 @@ def generate_patch(state: Dict[str, Any]) -> Dict[str, Any]:
     if state.get("cascade_report"):
         prompt += f"\nCascade Failure Context (Do NOT break these):\n{state.get('cascade_report')}\n"
         
+        
+    if state.get("fast_forward_patch") and state.get("patch_diff"):
+        logger.info("[PatchGenerator] ⏩ ChromaDB Fast-Forward active! Bypassing LLM patch generation.")
+        return {
+            **state,
+            "retry_count": state.get("retry_count", 0) + 1
+        }
+        
     logger.info(f"[PatchGenerator] Asking LLM for corrected code for {failing_file}...")
     
     patched_content = call_llm(prompt=prompt, system=system_prompt)
