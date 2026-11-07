@@ -103,16 +103,15 @@ def call_gemma(prompt: str, system: str = '') -> str:
         logger.info("Path used: Google Gemma 3 (gemma-3-27b-it)")
         client = genai.Client(api_key=api_key)
 
+        # Gemma does NOT support system_instruction — prepend it to the prompt
+        full_prompt = f"{system}\n\n{prompt}" if system else prompt
+
         config = types.GenerateContentConfig(temperature=0.2)
-        if system:
-            config = types.GenerateContentConfig(
-                temperature=0.2,
-                system_instruction=system,
-            )
 
         response = client.models.generate_content(
             model="gemma-3-27b-it",
-            contents=prompt,
+            contents=full_prompt,
+
             config=config,
         )
         return response.text.strip()
