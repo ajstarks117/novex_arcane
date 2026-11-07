@@ -34,7 +34,7 @@ def test_check_no_conflict(tmp_path):
 
     assert result['conflicts_found'] is False
     assert result['action'] == 'no_conflict'
-    assert result['score'] == 1.0
+    assert result['confidence_score'] == 1.0
     assert result['details'] == []
 
 
@@ -66,5 +66,5 @@ def test_check_auto_resolved(tmp_path):
 
     assert result['conflicts_found'] is True
     assert result['action'] == 'auto_resolved'
-    assert result['score'] > 0.85
+    assert result['confidence_score'] > 0.85
     assert len(result['details']) == 1
