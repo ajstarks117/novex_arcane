@@ -6,19 +6,32 @@ from dotenv import load_dotenv
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-def create_pr(repo_full_name, base_branch, commit_sha, patch_diff, failing_test, validator_summary=None, mermaid_diagram=None):
+from agents.mermaid_generator import generate_mermaid_diagram
+
+def create_pr(state: dict) -> str:
     """
-    Creates a new branch from base_branch, commits the patch diff,
-    and opens a PR to main. Includes validator_summary and mermaid_diagram if provided.
+    Creates a new branch from main, commits the patch diff,
+    and opens a PR with the full 7-section format.
     """
     token = os.getenv("GITHUB_PAT")
     if not token:
         raise ValueError("GITHUB_PAT not found in environment variables")
         
+    repo_full_name = state.get("repo_full_name", "")
+    commit_sha = state.get("commit_sha", "unknown")
+    patch_diff = state.get("patch_diff", "")
+    failing_test = state.get("failing_test", "unknown_test")
+    failing_file = state.get("failing_file", "unknown_file")
+    root_cause = state.get("root_cause_summary", "No root cause provided.")
+    regression_test = state.get("regression_test_code", "")
+    confidence = state.get("confidence_score", "N/A")
+    tests_passed = state.get("tests_passed", False)
+    
     g = Github(token)
     repo = g.get_repo(repo_full_name)
     
     branch_name = f"arcane/fix-{commit_sha[:7]}"
+    base_branch = "main"
     
     # 1. Create a new branch from main
     base_ref = repo.get_git_ref(f"heads/{base_branch}")
@@ -28,7 +41,6 @@ def create_pr(repo_full_name, base_branch, commit_sha, patch_diff, failing_test,
         logger.warning(f"Branch creation exception (might already exist): {e}")
         
     # 2. Commit the patch_diff content to the file on this branch
-    # For Phase 1 we log the patch diff to a tracking file to satisfy the commit requirement
     file_path = f"arcane_patch_{commit_sha[:7]}.diff"
     commit_msg = f"fix: ARCANE auto-repair code patch for {failing_test}"
     
@@ -38,16 +50,48 @@ def create_pr(repo_full_name, base_branch, commit_sha, patch_diff, failing_test,
     except Exception:
         repo.create_file(file_path, commit_msg, patch_diff, branch=branch_name)
         
-    # 3. Opens a PR from arcane/fix-{sha} to main
+    # Generate mermaid diagram
+    logger.info("Generating Mermaid diagram...")
+    mermaid_diagram = generate_mermaid_diagram(patch_diff, root_cause)
+
+    # Compile the 7-section PR body
     pr_title = f"fix: ARCANE auto-repair for {failing_test}"
     
-    pr_body = f"### Patch applied\n```diff\n{patch_diff}\n```\n\n**Failing Test:** `{failing_test}`"
-    if validator_summary:
-        pr_body += f"\n\n> **Validation:** {validator_summary}"
+    memory_hit_str = ""
+    if "date" in state and "test_file" in state:
+        memory_hit_str = f"> **🧠 Pattern matched from memory** — {state['date']} — `{state['test_file']}`\n\n"
     
-    if mermaid_diagram:
-        pr_body += f"\n\n### Execution Flow\n{mermaid_diagram}"
-    
+    pr_body = f"""## ARCANE Autonomous Repair
+
+{memory_hit_str}### 1. What Broke
+**Failing Test:** `{failing_test}`
+
+### 2. Root Cause
+{root_cause}
+
+### 3. Fix
+```diff
+{patch_diff}
+```
+
+### 4. Execution Flow
+{mermaid_diagram}
+
+### 5. Test
+**Regression Test Code Generated:**
+```python
+{regression_test or "# No tests generated"}
+```
+
+### 6. Confidence
+- **Score:** {confidence}%
+- **Validator Passed:** {tests_passed}
+
+### 7. Files Changed
+- `{failing_file}`
+"""
+
+    # 3. Opens a PR from arcane/fix-{sha} to main
     pr = repo.create_pull(
         title=pr_title,
         body=pr_body,
