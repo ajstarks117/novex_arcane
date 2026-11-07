@@ -73,8 +73,42 @@ async def process_events(event_queue: asyncio.Queue):
                 "retry_count":    0,
             }
 
-            # Run the LangGraph workflow
-            result = graph.invoke(initial_state)
+            # Start the LangGraph workflow using streaming for live UI updates
+            result = initial_state
+            
+            # Start Analyst as running first
+            pipeline_status["agents"]["analyst"] = "running"
+            
+            async for s in graph.astream(initial_state):
+                for node_name, state in s.items():
+                    result = state
+                    
+                    if node_name == "analyzing_node":
+                        pipeline_status["agents"]["analyst"] = "done"
+                        pipeline_status["current_state"] = "BISECTING"
+                        pipeline_status["agents"]["bisect"] = "running"
+                        
+                    elif node_name == "bisecting_node":
+                        pipeline_status["agents"]["bisect"] = "done"
+                        pipeline_status["current_state"] = "PATCHING"
+                        pipeline_status["agents"]["patch_generator"] = "running"
+                        
+                    elif node_name == "patching_node":
+                        pipeline_status["agents"]["patch_generator"] = "done"
+                        pipeline_status["current_state"] = "VALIDATING"
+                        pipeline_status["agents"]["validator"] = "running"
+                        
+                    elif node_name == "validating_node":
+                        pipeline_status["agents"]["validator"] = "done"
+                        if result.get("retry_count", 0) < 3 and result.get("confidence_score", 1.0) < 0.85:
+                            pipeline_status["current_state"] = "PATCHING"
+                            pipeline_status["agents"]["patch_generator"] = "running"
+                        else:
+                            pipeline_status["current_state"] = "TEST GENERATION"
+                            pipeline_status["agents"]["pr_agent"] = "running"
+                            
+                    elif node_name == "pr_creation_node":
+                        pipeline_status["agents"]["pr_agent"] = "done"
 
             if result.get("pr_url"):
                 pipeline_status["pr_url"] = result["pr_url"]

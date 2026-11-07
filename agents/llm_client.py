@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 def call_llm(prompt: str, system: str = '') -> str:
     """
-    Calls Google Gemini API. Swaps to Ollama logic for local deployment if rate limited.
+    Calls Google Gemini API. Swapped out Claude & Ollama logic for local deployment.
     """
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not api_key:
@@ -23,6 +23,7 @@ def call_llm(prompt: str, system: str = '') -> str:
         config = types.GenerateContentConfig(
             temperature=0.2
         )
+        # Adding system instruction if provided
         if system:
             config.system_instruction = system
 
