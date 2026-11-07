@@ -58,12 +58,17 @@ def run_sandbox(repo_url: str, commit_sha: str, patch_diff: Optional[str] = None
             t_boot = time.perf_counter()
             print(f"SANDBOX: container ready in {t_boot - t_start:.2f}s")
 
-            # 2. Clone the repository inside the container's /sandbox
+            # 2. Clean /sandbox dir in case of leftover files, then clone
+            exec_in_container(["sh", "-c", "rm -rf /sandbox/* /sandbox/.*  2>/dev/null || true"])
             clone_res = exec_in_container(["git", "clone", repo_url, "."])
             if clone_res.returncode != 0:
                 return {"passed": False, "output": f"Clone failed: {clone_res.stderr}", "exit_code": clone_res.returncode}
             t_clone = time.perf_counter()
             print(f"SANDBOX: repo cloned in {t_clone - t_boot:.2f}s")
+
+            # Install requirements if present
+            exec_in_container(["sh", "-c", "test -f requirements.txt && pip install -q -r requirements.txt || true"])
+
 
         # 3. Checkout the specific commit SHA — then hard reset for clean state
         exec_in_container(["git", "fetch", "--all"])
