@@ -21,8 +21,8 @@ def test_infer_intent_mock_llm():
         "confidence": 0.92
     })
     
-    with patch('agents.intent_inferrer._call_claude', return_value=mock_response), \
-         patch.dict(os.environ, {"ANTHROPIC_API_KEY": "fake-key"}):
+    with patch('agents.intent_inferrer.call_llm', return_value=mock_response), \
+         patch.dict(os.environ, {"GEMINI_API_KEY": "fake-key"}):
         
         result = infer_intent(
             ours_code="if username == 'admin' and password == 'secret':\n    return True",

@@ -60,8 +60,8 @@ def test_check_auto_resolved(tmp_path):
 
     mock_resp = json.dumps(MOCK_INTENT)
 
-    with patch('agents.intent_inferrer._call_claude', return_value=mock_resp), \
-         patch.dict(os.environ, {'ANTHROPIC_API_KEY': 'fake-key'}):
+    with patch('agents.intent_inferrer.call_llm', return_value=mock_resp), \
+         patch.dict(os.environ, {'GEMINI_API_KEY': 'fake-key'}):
         result = ConflictResolver().check(state)
 
     assert result['conflicts_found'] is True

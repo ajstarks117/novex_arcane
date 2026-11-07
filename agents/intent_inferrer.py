@@ -1,6 +1,7 @@
 import os
 import json
 import httpx
+from agents.llm_client import call_llm
 
 def infer_intent(ours_code: str, theirs_code: str,
                  ours_commit_msg: str, theirs_commit_msg: str) -> dict:
@@ -24,50 +25,17 @@ Answer the following:
 Return ONLY a JSON object with no preamble, no markdown fences, exactly this shape:
 {{"winner": "ours" | "theirs" | "merge", "reasoning": "one sentence explanation", "compatible": true | false, "confidence": 0.0}}"""
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    
-    if api_key:
-        try:
-            result = _call_claude(prompt, api_key)
-            return _parse_response(result)
-        except Exception as e:
-            print(f"Claude API failed: {e}. Falling back to Ollama.")
-    
-    # Ollama fallback
-    ollama_base = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
     try:
-        result = _call_ollama(prompt, ollama_base)
+        result = call_llm(prompt)
         return _parse_response(result)
     except Exception as e:
-        print(f"Ollama fallback also failed: {e}. Returning safe default.")
+        print(f"LLM intent inference failed: {e}. Returning safe default.")
         return {
             "winner": "ours",
             "reasoning": "Could not infer intent — defaulting to ours.",
             "compatible": False,
             "confidence": 0.5
         }
-
-
-def _call_claude(prompt: str, api_key: str) -> str:
-    import anthropic
-    client = anthropic.Anthropic(api_key=api_key)
-    message = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=512,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return message.content[0].text
-
-
-def _call_ollama(prompt: str, base_url: str) -> str:
-    response = httpx.post(
-        f"{base_url}/api/generate",
-        json={"model": "llama3", "prompt": prompt, "stream": False},
-        timeout=60.0
-    )
-    response.raise_for_status()
-    return response.json()["response"]
-
 
 def _parse_response(text: str) -> dict:
     # Strip markdown fences if present
