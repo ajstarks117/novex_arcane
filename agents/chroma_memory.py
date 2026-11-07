@@ -131,12 +131,18 @@ def query_memory(client: chromadb.ClientAPI,
         return None
 
     if not results or not results['distances'] or not results['distances'][0]:
+        print(f"[chroma_memory] No results in collection.")
         return None
 
     distance   = results['distances'][0][0]
     similarity = 1.0 / (1.0 + distance)   # convert L2 distance → similarity
 
+    print(f"[chroma_memory] Best match: distance={distance:.4f}, similarity={similarity:.4f}, threshold={threshold}")
+
     if similarity >= threshold:
+        print(f"[chroma_memory] ✅ MATCH! similarity {similarity:.4f} >= threshold {threshold}")
         return results['metadatas'][0][0]
 
+    print(f"[chroma_memory] ❌ No match. similarity {similarity:.4f} < threshold {threshold}")
     return None
+

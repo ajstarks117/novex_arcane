@@ -22,7 +22,9 @@ def analyze(state: Dict[str, Any]) -> Dict[str, Any]:
     try:
         db_path = os.environ.get('CHROMADB_PATH', './chroma_data')
         client = init_memory(db_path)
-        memory_match = query_memory(client, failure_log)
+        # Lower threshold (0.65) because webhook sends commit message, not raw error log
+        memory_match = query_memory(client, failure_log, threshold=0.65)
+
         
         if memory_match:
             logger.info(f"[Analyst] 🧠 CHROMA MEMORY HIT! Bypassing LLM analysis. Matched commit: {memory_match.get('commit_sha')}")
