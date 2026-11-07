@@ -1,6 +1,7 @@
-import logging
 import asyncio
+import logging
 from datetime import datetime, timezone
+from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
 # Load environment variables before other imports
@@ -9,9 +10,8 @@ load_dotenv()
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
 from api.webhook import router as webhook_router, event_queue
-from agents.orchestrator import run_pipeline
+from agents.workflow import graph
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -21,50 +21,85 @@ pipeline_status = {
     "current_state": "IDLE",
     "last_event": None,
     "agents": {
-        "analyst":        "idle",
-        "bisect":         "idle",
-        "patch_generator":"idle",
-        "validator":      "idle",
-        "pr_agent":       "idle",
+        "analyst":         "idle",
+        "bisect":          "idle",
+        "patch_generator": "idle",
+        "validator":       "idle",
+        "pr_agent":        "idle",
     },
     "pr_url":  None,
     "error":   None,
 }
 
-async def process_queue():
-    """Background task to consume events from the webhook queue."""
-    logger.info("Starting background queue consumer")
+# ── Async consumer: drains the webhook queue → runs LangGraph ────────────────
+
+async def process_events():
+    """
+    Long-running task that pulls events from the webhook queue
+    and feeds each one into the compiled LangGraph workflow.
+    """
+    logger.info("[Consumer] Event processor started — waiting for webhook events")
     while True:
+        event = await event_queue.get()
+        logger.info(
+            f"[Consumer] Processing event for "
+            f"{event.get('repo_full_name')} ({event.get('commit_sha', '?')[:7]})"
+        )
+
+        # Stamp last_event so the dashboard can show it
+        pipeline_status["last_event"] = {
+            "repo":         event.get("repo_full_name"),
+            "sha":          event.get("commit_sha"),
+            "triggered_at": datetime.now(timezone.utc).isoformat(),
+        }
+        pipeline_status["current_state"] = "ANALYZING"
+
         try:
-            event = await event_queue.get()
-            logger.info(f"Dequeued event for processing: {event}")
-
-            # Stamp last_event so the dashboard can show it
-            pipeline_status["last_event"] = {
-                "repo":         event.get("repo_full_name"),
-                "sha":          event.get("commit_sha"),
-                "triggered_at": datetime.now(timezone.utc).isoformat(),
+            # Build initial state from webhook payload
+            initial_state = {
+                "repo_full_name": event.get("repo_full_name", ""),
+                "commit_sha":     event.get("commit_sha", ""),
+                "failure_log":    event.get("failure_log", ""),
+                # Placeholder — AST / LLM layers will populate these in Phase 2
+                "patch_diff":     event.get("failure_log", "# placeholder patch"),
+                "failing_test":   "unknown_test",
+                "retry_count":    0,
             }
-            pipeline_status["current_state"] = "ANALYZING"
 
-            await run_pipeline(event)
-            event_queue.task_done()
-        except asyncio.CancelledError:
-            break
+            # Run the LangGraph workflow
+            result = graph.invoke(initial_state)
+
+            if result.get("pr_url"):
+                pipeline_status["pr_url"] = result["pr_url"]
+                pipeline_status["current_state"] = "DONE"
+                logger.info(f"[Consumer] ✅ PR created: {result['pr_url']}")
+            elif result.get("error"):
+                pipeline_status["current_state"] = "ESCALATED"
+                pipeline_status["error"] = result["error"]
+                logger.warning(f"[Consumer] ⚠️  Workflow ended with error: {result['error']}")
+            else:
+                pipeline_status["current_state"] = "DONE"
+                logger.info(f"[Consumer] Workflow completed: {result}")
+
         except Exception as e:
-            logger.error(f"Error processing event: {e}")
+            logger.error(f"[Consumer] Unhandled error processing event: {e}")
             pipeline_status["current_state"] = "ESCALATED"
             pipeline_status["error"] = str(e)
+        finally:
+            event_queue.task_done()
+
+
+# ── App lifecycle ────────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    task = asyncio.create_task(process_queue())
+    """Start the background consumer on startup, cancel on shutdown."""
+    task = asyncio.create_task(process_events())
+    logger.info("[Lifespan] Background event processor launched")
     yield
     task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
+    logger.info("[Lifespan] Background event processor cancelled")
+
 
 app = FastAPI(title="ARCANE API", lifespan=lifespan)
 
@@ -78,6 +113,7 @@ app.add_middleware(
 )
 
 app.include_router(webhook_router)
+
 
 @app.get("/health")
 async def health_check():
