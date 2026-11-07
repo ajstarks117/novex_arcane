@@ -1,58 +1,10 @@
 import os
 import subprocess
-import requests
 import json
+import tempfile
 from typing import Dict, Any
 from agents.sandbox_runner import run_sandbox
-
-def call_llm(prompt_system: str, prompt_user: str) -> str:
-    """
-    Calls Claude API, with a fallback to local Ollama if rate-limited or missing key.
-    """
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    
-    # Try Claude
-    if api_key:
-        try:
-            headers = {
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json"
-            }
-            data = {
-                "model": "claude-3-5-sonnet-20240620", # Updated from claude-sonnet-4-20250514 placeholder
-                "max_tokens": 1024,
-                "system": prompt_system,
-                "messages": [
-                    {"role": "user", "content": prompt_user}
-                ]
-            }
-            response = requests.post("https://api.anthropic.com/v1/messages", headers=headers, json=data, timeout=15)
-            
-            if response.status_code == 200:
-                return response.json()["content"][0]["text"]
-            else:
-                print(f"Claude API failed ({response.status_code}): {response.text}. Falling back to Ollama...")
-        except Exception as e:
-            print(f"Claude API request failed: {e}. Falling back to Ollama...")
-    else:
-        print("ANTHROPIC_API_KEY not found. Falling back to Ollama...")
-        
-    # Fallback to Ollama
-    try:
-        data = {
-            "model": "llama3",
-            "prompt": f"{prompt_system}\n\n{prompt_user}",
-            "stream": False
-        }
-        response = requests.post("http://localhost:11434/api/generate", json=data, timeout=15)
-        if response.status_code == 200:
-            return response.json()["response"]
-        else:
-            return ""
-    except Exception as e:
-        print(f"Ollama request failed: {e}")
-        return ""
+from agents.llm_client import call_llm
 
 def generate_regression_test(state: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -85,7 +37,7 @@ Write a pytest function named test_{failing_file_stem}_regression that:
 Return only the function. No class wrapper."""
 
     print("Generating regression test via LLM...")
-    generated_code = call_llm(system_prompt, user_prompt)
+    generated_code = call_llm(prompt=user_prompt, system=system_prompt)
     
     # Post-processing: strip markdown backticks if LLM disobeyed
     cleaned_code = ""
@@ -99,7 +51,7 @@ Return only the function. No class wrapper."""
     if '"""' not in regression_test_code and "'''" not in regression_test_code:
         print("Warning: Generated test has no docstring. Retrying once...")
         system_prompt += " YOU MUST INCLUDE A DOCSTRING AS THE FIRST STATEMENT IN THE FUNCTION."
-        generated_code = call_llm(system_prompt, user_prompt)
+        generated_code = call_llm(prompt=user_prompt, system=system_prompt)
         cleaned_code = ""
         for line in generated_code.splitlines():
             if not line.strip().startswith("```"):
@@ -108,7 +60,7 @@ Return only the function. No class wrapper."""
 
     # Write to file
     sha_short = commit_sha[:7] if commit_sha else "unknown"
-    test_file_path = f"/tmp/arcane_regtest_{sha_short}.py"
+    test_file_path = os.path.join(tempfile.gettempdir(), f"arcane_regtest_{sha_short}.py")
     
     with open(test_file_path, "w", encoding="utf-8") as f:
         f.write(regression_test_code)

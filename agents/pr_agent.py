@@ -58,8 +58,20 @@ def create_pr(state: dict) -> str:
     pr_title = f"fix: ARCANE auto-repair for {failing_test}"
     
     memory_hit_str = ""
-    if "date" in state and "test_file" in state:
-        memory_hit_str = f"> **🧠 Pattern matched from memory** — {state['date']} — `{state['test_file']}`\n\n"
+    memory_hit = state.get("memory_hit")
+    if memory_hit and isinstance(memory_hit, dict):
+        mem_date = memory_hit.get("date", "unknown date")
+        mem_file = memory_hit.get("test_file", "unknown file")
+        memory_hit_str = f"> **🧠 Pattern matched from memory** — {mem_date} — `{mem_file}`\n\n"
+        
+    if isinstance(confidence, (int, float)) and confidence >= 85:
+        confidence_str = f"{confidence}% (🟢 Auto-Approve Threshold Met)"
+    elif isinstance(confidence, (int, float)) and confidence >= 60:
+        confidence_str = f"{confidence}% (🟡 Manual Review Required)"
+    elif isinstance(confidence, (int, float)):
+        confidence_str = f"{confidence}% (🔴 Escalated)"
+    else:
+        confidence_str = str(confidence)
     
     pr_body = f"""## ARCANE Autonomous Repair
 
@@ -84,7 +96,7 @@ def create_pr(state: dict) -> str:
 ```
 
 ### 6. Confidence
-- **Score:** {confidence}%
+- **Score:** {confidence_str}
 - **Validator Passed:** {tests_passed}
 
 ### 7. Files Changed

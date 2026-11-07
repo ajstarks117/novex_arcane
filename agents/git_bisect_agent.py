@@ -73,17 +73,22 @@ def run_bisect(state: Dict[str, Any]) -> Dict[str, Any]:
         exec_cmd(["git", "bisect", "bad"])  # HEAD (target_commit_sha) is bad
 
         # Read known good commit from .arcane_config.json
+        known_good_commit = None
         cat_res = exec_cmd(["cat", ".arcane_config.json"])
-        if cat_res.returncode != 0:
-            raise RuntimeError("Could not read .arcane_config.json to find a known-good commit.")
-        
-        try:
-            config = json.loads(cat_res.stdout)
-            known_good_commit = config.get("known_good_commit")
-            if not known_good_commit:
-                raise ValueError("known_good_commit not found in config.")
-        except Exception as e:
-            raise RuntimeError(f"Failed to parse .arcane_config.json: {e}")
+        if cat_res.returncode == 0:
+            try:
+                config = json.loads(cat_res.stdout)
+                known_good_commit = config.get("known_good_commit")
+            except Exception as e:
+                logger.warning(f"Failed to parse .arcane_config.json: {e}")
+                
+        if not known_good_commit:
+            logger.info("[Bisect] .arcane_config.json missing or invalid. Falling back to HEAD~3 as known good commit.")
+            head_3_res = exec_cmd(["git", "rev-parse", "HEAD~3"])
+            if head_3_res.returncode == 0:
+                known_good_commit = head_3_res.stdout.strip()
+            else:
+                raise RuntimeError("Failed to resolve HEAD~3 for bisect fallback.")
 
         logger.info(f"[Bisect] Found known good commit: {known_good_commit[:7]}")
         

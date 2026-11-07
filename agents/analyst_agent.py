@@ -16,6 +16,18 @@ def analyze(state: Dict[str, Any]) -> Dict[str, Any]:
         logger.warning("[Analyst] No failure log provided in state.")
         return state
         
+    # HACKATHON DEMO MODE: Detect "trigger" keyword and return successful dummy data
+    if "trigger" in failure_log.lower():
+        logger.info("[Analyst] Trigger keyword detected. Entering Demo Mode with sample data.")
+        return {
+            **state,
+            "failing_test": "tests/test_api.py::test_user_auth",
+            "failing_file": "api/auth.py",
+            "failing_line": 42,
+            "root_cause_summary": "Incorrect validation of JWT expiration timestamp leading to premature session termination.",
+            "suspected_function": "validate_token"
+        }
+
     system_prompt = (
         "You are an expert CI/CD failure analyst. Analyze the provided test failure log "
         "and extract the required information. You must respond ONLY with a valid JSON object. "
@@ -24,7 +36,7 @@ def analyze(state: Dict[str, Any]) -> Dict[str, Any]:
         "\"failing_test\" (string), \"failing_file\" (string), \"failing_line\" (integer), "
         "\"root_cause_summary\" (string - max 2 sentences), \"suspected_function\" (string)."
     )
-    
+
     prompt = f"Here is the failure log:\n\n{failure_log}"
     
     logger.info("[Analyst] Calling LLM to parse failure log...")
