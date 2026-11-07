@@ -10,14 +10,14 @@ logger = logging.getLogger(__name__)
 
 def call_ollama(prompt: str, system: str = '') -> str:
     """
-    Fallback to local Ollama instance running llama3.1
+    Fallback to local Ollama instance running phi3
     """
-    logger.info("Path used: Ollama Fallback (llama3.1)")
+    logger.info("Path used: Ollama Fallback (phi3)")
     try:
         url = "http://localhost:11434/api/generate"
         full_prompt = f"{system}\n\n{prompt}" if system else prompt
         payload = {
-            "model": "llama3.1",
+            "model": "phi3",
             "prompt": full_prompt,
             "stream": False
         }
