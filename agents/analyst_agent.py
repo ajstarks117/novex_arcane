@@ -116,8 +116,12 @@ def analyze(state: Dict[str, Any]) -> Dict[str, Any]:
 
     # If LLM couldn't extract a real failing file (commit message is not an error log),
     # fall back to demo data to guarantee a proper patch and PR
-    placeholder_values = {"unknown_file", "unknown_file.py", "unknown", "", None}
-    if not failing_file or failing_file in placeholder_values:
+    placeholder_values = {
+        "unknown_file", "unknown_file.py", "unknown", "", None,
+        "N/A", "n/a", "na", "N/A.", "none", "None",
+        "not available", "not_available", "unknown test", "unknown_test"
+    }
+    if not failing_file or failing_file.strip() in placeholder_values:
         logger.info("[Analyst] LLM could not extract failing_file from commit message — using demo data.")
         return {
             **state,

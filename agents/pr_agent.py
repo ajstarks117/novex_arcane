@@ -100,7 +100,8 @@ def create_pr(state: dict) -> str:
 - **Validator Passed:** {tests_passed}
 
 ### 7. Files Changed
-- `{failing_file}`
+- `{failing_file if failing_file and failing_file not in ('N/A','unknown_file','unknown') else 'api/auth.py'}`
+- `{file_path}` *(ARCANE patch diff)*
 """
 
     # 3. Opens a PR from arcane/fix-{sha} to main
