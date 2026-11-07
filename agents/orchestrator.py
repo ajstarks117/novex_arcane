@@ -489,6 +489,14 @@ def after_validating(state: ArcaneState) -> str:
     return "patching"
 
 
+def after_analyzing(state: ArcaneState) -> str:
+    """After ANALYZING: if ChromaDB memory hit, skip directly to creating_pr."""
+    if state.get("fast_forward_patch"):
+        logger.info("[ANALYZING] 🧠 Memory fast-forward — skipping to PR creation")
+        return "creating_pr"
+    return "bisecting"
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  Build & compile the graph
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -514,7 +522,17 @@ def build_graph() -> StateGraph:
 
     # ── Linear edges ──
     builder.add_edge("idle", "analyzing")
-    builder.add_edge("analyzing", "bisecting")
+
+    # ── Conditional: ANALYZING → BISECTING (normal) or CREATING_PR (memory hit) ──
+    builder.add_conditional_edges(
+        "analyzing",
+        after_analyzing,
+        {
+            "bisecting": "bisecting",
+            "creating_pr": "creating_pr",
+        },
+    )
+
     builder.add_edge("bisecting", "patching")
 
     # ── Conditional: PATCHING → PROPAGATING or ESCALATED ──
