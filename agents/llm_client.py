@@ -72,15 +72,15 @@ def _pick_fallback(system: str) -> str:
 
 def call_ollama(prompt: str, system: str = '') -> str:
     """
-    Intermediate fallback: local Ollama llama3.1.
-    Ollama must already be running: ollama run llama3.1
+    Intermediate fallback: local Ollama llama3:8b.
+    Ollama is already running as a background service on port 11434.
     If Ollama is also unavailable, falls back to static offline mocks.
     """
-    logger.info("Path used: Ollama Fallback (llama3.1)")
+    logger.info("Path used: Ollama Fallback (llama3:8b)")
     try:
         base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
         full_prompt = f"{system}\n\n{prompt}" if system else prompt
-        payload = {"model": "llama3.1", "prompt": full_prompt, "stream": False}
+        payload = {"model": "llama3:8b", "prompt": full_prompt, "stream": False}
         res = requests.post(f"{base_url}/api/generate", json=payload, timeout=120)
         res.raise_for_status()
         return res.json().get("response", "").strip()
