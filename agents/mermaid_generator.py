@@ -43,6 +43,27 @@ def validate_mermaid(mermaid_str: str) -> bool:
     return True
 
 
+def sanitize_mermaid_labels(mermaid_str: str) -> str:
+    """
+    Post-process mermaid output to strip characters that cause GitHub parse errors.
+    Specifically removes parentheses inside node labels like A[func(arg)] -> A[func arg]
+    """
+    import re
+    # Replace content inside [] or () node labels - strip nested parens
+    # Pattern: find [text(stuff)] and replace with [text stuff]
+    def clean_label(m):
+        inner = m.group(1)
+        # Remove parentheses and their contents, replace with space
+        cleaned = re.sub(r'\([^)]*\)', '', inner).strip()
+        # Also remove other problematic chars: &, <, >
+        cleaned = re.sub(r'[&<>{}]', '', cleaned).strip()
+        return f'[{cleaned}]'
+
+    # Fix square bracket labels containing parens
+    result = re.sub(r'\[([^\]]+)\]', clean_label, mermaid_str)
+    return result
+
+
 def generate_mermaid_diagram(patch_diff: str, root_cause: str) -> str:
     """
     Generates a Mermaid.js flowchart via call_llm (which has 429 fallback built-in).
@@ -92,6 +113,9 @@ def generate_mermaid_diagram(patch_diff: str, root_cause: str) -> str:
         # Strip any remaining fences before wrapping
         if "```mermaid" in mermaid_raw:
             mermaid_raw = mermaid_raw.split("```mermaid", 1)[-1].split("```", 1)[0].strip()
+
+        # Sanitize labels to remove any special chars the LLM snuck in
+        mermaid_raw = sanitize_mermaid_labels(mermaid_raw)
 
         return f"```mermaid\n{mermaid_raw}\n```"
 
