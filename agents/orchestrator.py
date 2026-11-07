@@ -386,7 +386,7 @@ def creating_pr_node(state: ArcaneState) -> ArcaneState:
 
 
 def done_node(state: ArcaneState) -> ArcaneState:
-    """DONE — terminal success state with full summary."""
+    """DONE — terminal success state with full summary + store patch to ChromaDB."""
     elapsed = time.time() - state.get("pipeline_start_time", time.time())
     patch_lines = len(state.get("patch_diff", "").splitlines())
     agents = state.get("agents_used", "").strip(",").replace(",", ", ")
@@ -407,7 +407,29 @@ def done_node(state: ArcaneState) -> ArcaneState:
         f"  Failing Test    : {state.get('failing_test', '?')}\n"
         + "=" * 70
     )
+
+    # 🧠 Store successful patch to ChromaDB for future memory fast-path
+    if not state.get("fast_forward_patch"):  # Don't re-store memory hits
+        try:
+            import os
+            from agents.chroma_memory import init_memory, store_patch
+            db_path = os.environ.get('CHROMADB_PATH', './chroma_data')
+            client = init_memory(db_path)
+            store_patch(
+                client,
+                state.get("root_cause_summary", ""),   # error_log (used for embedding)
+                state.get("root_cause_summary", ""),   # root_cause
+                state.get("patch_diff", ""),            # patch_diff
+                state.get("failing_test", ""),          # test_file
+                state.get("commit_sha", ""),            # commit_sha
+            )
+            logger.info("[DONE] 🧠 Patch stored to ChromaDB memory for future fast-path.")
+        except Exception as e:
+            logger.warning(f"[DONE] ChromaDB store failed (non-fatal): {e}")
+
+
     return state
+
 
 
 def escalated_node(state: ArcaneState) -> ArcaneState:

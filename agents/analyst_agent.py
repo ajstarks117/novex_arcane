@@ -17,20 +17,8 @@ def analyze(state: Dict[str, Any]) -> Dict[str, Any]:
     if not failure_log:
         logger.warning("[Analyst] No failure log provided in state.")
         return state
-        
-    # HACKATHON DEMO MODE: Detect "trigger" keyword and return successful dummy data
-    if "trigger" in failure_log.lower():
-        logger.info("[Analyst] Trigger keyword detected. Entering Demo Mode with sample data.")
-        return {
-            **state,
-            "failing_test": "tests/test_api.py::test_user_auth",
-            "failing_file": "api/auth.py",
-            "failing_line": 42,
-            "root_cause_summary": "Incorrect validation of JWT expiration timestamp leading to premature session termination.",
-            "suspected_function": "validate_token"
-        }
 
-    # 🧠 CHROMADB MEMORY FAST PATH
+    # 🧠 CHROMADB MEMORY FAST PATH — check FIRST before any other logic
     try:
         db_path = os.environ.get('CHROMADB_PATH', './chroma_data')
         client = init_memory(db_path)
@@ -59,6 +47,18 @@ def analyze(state: Dict[str, Any]) -> Dict[str, Any]:
             }
     except Exception as e:
         logger.error(f"[Analyst] ChromaDB memory check failed: {e}")
+
+    # HACKATHON DEMO MODE: If no memory hit, detect "trigger" keyword and return demo data
+    if "trigger" in failure_log.lower():
+        logger.info("[Analyst] Trigger keyword detected. Entering Demo Mode with sample data.")
+        return {
+            **state,
+            "failing_test": "tests/test_api.py::test_user_auth",
+            "failing_file": "api/auth.py",
+            "failing_line": 42,
+            "root_cause_summary": "Incorrect validation of JWT expiration timestamp leading to premature session termination.",
+            "suspected_function": "validate_token"
+        }
 
     system_prompt = (
         "You are an expert CI/CD failure analyst. Analyze the provided test failure log "
