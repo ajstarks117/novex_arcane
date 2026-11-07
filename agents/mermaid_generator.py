@@ -46,22 +46,42 @@ def validate_mermaid(mermaid_str: str) -> bool:
 def sanitize_mermaid_labels(mermaid_str: str) -> str:
     """
     Post-process mermaid output to strip characters that cause GitHub parse errors.
-    Specifically removes parentheses inside node labels like A[func(arg)] -> A[func arg]
+    Fixes:
+      1. A[func(arg)]     -> A[func arg]        (parens in node labels)
+      2. -->|label|>      -> -->|label|          (invalid trailing > on edge labels)
+      3. B{diamond label} -> B[diamond label]    (curly braces cause parse issues)
+      4. Long edge labels -> truncated to 30 chars
     """
     import re
-    # Replace content inside [] or () node labels - strip nested parens
-    # Pattern: find [text(stuff)] and replace with [text stuff]
-    def clean_label(m):
+
+    # Fix 1: -->|label|> -> -->|label|   (strip trailing > after closing pipe)
+    mermaid_str = re.sub(r'\|([^|]+)\|>', r'|\1|', mermaid_str)
+
+    # Fix 2: strip curly-brace diamond nodes — replace {text} with [text]
+    mermaid_str = re.sub(r'\{([^}]+)\}', lambda m: f'[{m.group(1)}]', mermaid_str)
+
+    # Fix 3: strip parens inside square-bracket node labels A[func(arg)] -> A[func arg]
+    def clean_node_label(m):
         inner = m.group(1)
-        # Remove parentheses and their contents, replace with space
         cleaned = re.sub(r'\([^)]*\)', '', inner).strip()
-        # Also remove other problematic chars: &, <, >
         cleaned = re.sub(r'[&<>{}]', '', cleaned).strip()
+        # Truncate very long labels
+        if len(cleaned) > 40:
+            cleaned = cleaned[:37] + '...'
         return f'[{cleaned}]'
 
-    # Fix square bracket labels containing parens
-    result = re.sub(r'\[([^\]]+)\]', clean_label, mermaid_str)
-    return result
+    mermaid_str = re.sub(r'\[([^\]]+)\]', clean_node_label, mermaid_str)
+
+    # Fix 4: truncate very long edge labels -->|very long text| -> -->|short...|
+    def clean_edge_label(m):
+        label = m.group(1)
+        if len(label) > 30:
+            label = label[:27] + '...'
+        return f'|{label}|'
+
+    mermaid_str = re.sub(r'\|([^|]+)\|', clean_edge_label, mermaid_str)
+
+    return mermaid_str
 
 
 def generate_mermaid_diagram(patch_diff: str, root_cause: str) -> str:
