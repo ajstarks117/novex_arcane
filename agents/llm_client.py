@@ -72,7 +72,7 @@ def _pick_fallback(system: str) -> str:
 
 def call_ollama(prompt: str, system: str = '') -> str:
     """
-    Intermediate fallback: local Ollama llama3:8b.
+    Tier 3 fallback: local Ollama llama3:8b.
     Ollama is already running as a background service on port 11434.
     If Ollama is also unavailable, falls back to static offline mocks.
     """
@@ -89,14 +89,52 @@ def call_ollama(prompt: str, system: str = '') -> str:
         return _pick_fallback(system)
 
 
+def call_gemma(prompt: str, system: str = '') -> str:
+    """
+    Second-tier fallback: Google Gemma 3 27B via the same API key.
+    Separate rate limit quota from Gemini Flash, so this works when Flash is exhausted.
+    If Gemma also fails, falls through to Ollama.
+    """
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        return call_ollama(prompt, system)
+
+    try:
+        logger.info("Path used: Google Gemma 3 (gemma-3-27b-it)")
+        client = genai.Client(api_key=api_key)
+
+        config = types.GenerateContentConfig(temperature=0.2)
+        if system:
+            config = types.GenerateContentConfig(
+                temperature=0.2,
+                system_instruction=system,
+            )
+
+        response = client.models.generate_content(
+            model="gemma-3-27b-it",
+            contents=prompt,
+            config=config,
+        )
+        return response.text.strip()
+
+    except Exception as e:
+        err = str(e).lower()
+        if "429" in err or "quota" in err or "exhausted" in err:
+            logger.warning("[LLM_Client] Gemma 3 27B also rate limited! Falling back to Ollama...")
+        else:
+            logger.warning(f"[LLM_Client] Gemma 3 27B failed: {e}. Falling back to Ollama...")
+        return call_ollama(prompt, system)
+
+
 def call_llm(prompt: str, system: str = '') -> str:
     """
     Calls Google Gemini 2.5 Flash.
 
     Fallback chain:
-        1. Gemini 2.5 Flash   (primary)
-        2. Ollama llama3.1    (on 429 rate limit — must be running locally)
-        3. Static offline mock (if Ollama is also down — demo always succeeds)
+        1. Gemini 2.5 Flash    (primary — best quality)
+        2. Gemma 3 27B         (on Flash 429 — same API key, separate quota)
+        3. Ollama llama3:8b    (on Gemma 429 — local, no API needed)
+        4. Static offline mock (if everything is down — demo always succeeds)
     """
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not api_key:
@@ -124,8 +162,9 @@ def call_llm(prompt: str, system: str = '') -> str:
     except Exception as e:
         err = str(e).lower()
         if "429" in err or "quota" in err or "exhausted" in err or "resource_exhausted" in err:
-            logger.warning("[LLM_Client] Gemini rate limit hit! Falling back to Ollama llama3.1...")
-            return call_ollama(prompt, system)
+            logger.warning("[LLM_Client] Gemini Flash rate limit hit! Trying Gemma 3 27B...")
+            return call_gemma(prompt, system)
 
         logger.error(f"[LLM_Client] Gemini API call failed: {e}")
         return f"Error: Gemini API call failed: {e}"
+
