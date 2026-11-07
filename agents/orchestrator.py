@@ -1,5 +1,4 @@
-"""
-ARCANE Orchestrator — Phase 1 LangGraph State Machine Skeleton
+"""ARCANE Orchestrator — Phase 3 Hardened LangGraph State Machine
 
 States:
   IDLE → ANALYZING → BISECTING → PATCHING → PROPAGATING →
@@ -8,31 +7,75 @@ States:
 
 Conditional edges:
   • PATCHING      → ESCALATED           if retry_count >= 3
-  • VALIDATING    → GENERATING_TEST     if tests_passed == True
+  • VALIDATING    → GENERATING_TEST     if tests_passed and confidence >= 60
   • VALIDATING    → PATCHING            if tests_passed == False and retry_count < 3
-  • VALIDATING    → ESCALATED           if retry_count >= 3
+  • VALIDATING    → ESCALATED           if retry_count >= 3 OR confidence < 60
 """
 
 import asyncio
 import logging
+import time
+import functools
 from datetime import datetime
 from typing import TypedDict, Optional, Any
 
-from langgraph.graph import StateGraph, END
+try:
+    from agents.analyst_agent import analyze as run_analyst
+except ImportError as _e:
+    logger.warning(f"[ARCANE] analyst_agent not available: {_e}")
+    run_analyst = None
+
+try:
+    from agents.git_bisect_agent import run_bisect
+except ImportError as _e:
+    logger.warning(f"[ARCANE] git_bisect_agent not available: {_e}")
+    run_bisect = None
+
+try:
+    from agents.patch_generator import generate_patch as run_patch_generator
+except ImportError as _e:
+    logger.warning(f"[ARCANE] patch_generator not available: {_e}")
+    run_patch_generator = None
 
 try:
     from agents.validator_agent import validate, capture_baseline
+except ImportError as _e:
+    logger.warning(f"[ARCANE] validator_agent not available: {_e}")
+    validate = capture_baseline = None
+
+try:
     from agents.regression_test_generator import generate_regression_test
-except ImportError:
-    # Fallbacks so the graph compiles even if Ajaya's files aren't pulled yet
-    def validate(state): return {"tests_passed": True, "validator_summary": "mock validation pass", "timeout": False, "cascade_failure": False, "cascade_context": ""}
-    def capture_baseline(state): return {**state, "baseline_passing_tests": [], "baseline_failing_tests": []}
-    def generate_regression_test(state): return {"regression_test_code": "def test_mock(): pass"}
+except ImportError as _e:
+    logger.warning(f"[ARCANE] regression_test_generator not available: {_e}")
+    generate_regression_test = None
+
+try:
+    from agents.cross_file_propagator import CrossFilePropagator
+    _propagator = CrossFilePropagator()
+except ImportError as _e:
+    logger.warning(f"[ARCANE] cross_file_propagator not available: {_e}")
+    _propagator = None
+
+try:
+    from agents.conflict_resolver import ConflictResolver
+    _conflict_resolver = ConflictResolver()
+except ImportError as _e:
+    logger.warning(f"[ARCANE] conflict_resolver not available: {_e}")
+    _conflict_resolver = None
+
+try:
+    from agents.pr_agent import create_pr
+except ImportError as _e:
+    logger.warning(f"[ARCANE] pr_agent not available: {_e}")
+    create_pr = None
+
+from langgraph.graph import StateGraph, END
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
+NODE_TIMEOUT = 90  # seconds — any node exceeding this is auto-escalated
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -79,115 +122,324 @@ class ArcaneState(TypedDict, total=False):
 
     # ── Meta ──
     error: Optional[str]
+    auto_approved: bool
+    pipeline_start_time: float
+    agents_used: str
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  Node functions  (mock data — every node returns plausible hardcoded values)
+#  Timeout wrapper — escalates if any node exceeds NODE_TIMEOUT seconds
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class NodeTimeoutError(Exception):
+    """Raised when a node exceeds the allowed execution time."""
+    pass
+
+
+def with_timeout(node_name: str):
+    """Decorator that wraps a node function with a timeout guard."""
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(state):
+            start = time.time()
+            try:
+                result = func(state)
+            except Exception:
+                raise
+            elapsed = time.time() - start
+            if elapsed > NODE_TIMEOUT:
+                logger.warning(
+                    f"[TIMEOUT] {node_name} took {elapsed:.1f}s "
+                    f"(limit: {NODE_TIMEOUT}s) — escalating"
+                )
+                result["error"] = f"{node_name} timed out after {elapsed:.1f}s"
+                result["retry_count"] = result.get("retry_count", 0) + 1
+            return result
+        return wrapper
+    return decorator
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  Node functions — real agents with mock fallbacks
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def idle_node(state: ArcaneState) -> ArcaneState:
     """IDLE — receives the raw CI failure event and seeds the state."""
     logger.info("[IDLE] Received CI failure event")
     event = state.get("event", {})
-    
-    state_with_baseline = capture_baseline({
+    seeded_state = {
         **state,
         "repo_full_name": event.get("repo_full_name", state.get("repo_full_name", "")),
-        "commit_sha":     event.get("commit_sha", state.get("commit_sha", "")),
-        "failure_log":    event.get("failure_log", state.get("failure_log", "")),
-    })
-    return state_with_baseline
+        "commit_sha": event.get("commit_sha", state.get("commit_sha", "")),
+        "failure_log": event.get("failure_log", state.get("failure_log", "")),
+        "pipeline_start_time": time.time(),
+        "agents_used": "",
+    }
+    # Capture baseline BEFORE any patch is applied
+    if capture_baseline:
+        seeded_state = capture_baseline(seeded_state)
+    return seeded_state
 
 
-from agents.analyst_agent import analyze as run_analyst
-
+@with_timeout("ANALYZING")
 def analyzing_node(state: ArcaneState) -> ArcaneState:
     """ANALYZING — parses failure log to extract test name, file, line, root cause."""
     logger.info("[ANALYZING] Delegating to Analyst Agent")
-    return run_analyst(state)
+    try:
+        if run_analyst:
+            updated = run_analyst(state)
+            result = {**state, **updated}
+            result["agents_used"] = state.get("agents_used", "") + "analyst,"
+            return result
+        logger.warning("WARNING: analyst_agent not available — using mock")
+        return {
+            **state,
+            "failing_test": "test_mock",
+            "failing_file": "mock_file.py",
+            "failing_line": 10,
+            "root_cause_summary": "Mock root cause",
+            "suspected_function": "mock_func"
+        }
+    except Exception as e:
+        state['error'] = str(e)
+        state['retry_count'] = state.get('retry_count', 0) + 1
+        raise
 
 
+@with_timeout("BISECTING")
 def bisecting_node(state: ArcaneState) -> ArcaneState:
     """BISECTING — narrows down the commit that introduced the failure."""
     logger.info("[BISECTING] Running git-bisect analysis")
-    return {
-        **state,
-        "bisect_intent_report": (
-            f"Bisect identified commit {state.get('commit_sha', '???')[:7]} as the "
-            f"first bad commit. Function `{state.get('suspected_function', '?')}` "
-            f"in `{state.get('failing_file', '?')}` was modified."
-        ),
-    }
+    try:
+        if run_bisect:
+            updated = run_bisect(state)
+            result = {**state, **updated}
+            result["agents_used"] = state.get("agents_used", "") + "bisect,"
+            return result
+            
+        logger.warning("WARNING: git_bisect_agent not available — using mock")
+        return {
+            **state,
+            "bisect_intent_report": (
+                f"Bisect identified commit {state.get('commit_sha', '???')[:7]} as the "
+                f"first bad commit. Function `{state.get('suspected_function', '?')}` "
+                f"in `{state.get('failing_file', '?')}` was modified."
+            ),
+        }
+    except Exception as e:
+        state['error'] = str(e)
+        state['retry_count'] = state.get('retry_count', 0) + 1
+        raise
 
 
-from agents.patch_generator import generate_patch as run_patch_generator
-
+@with_timeout("PATCHING")
 def patching_node(state: ArcaneState) -> ArcaneState:
     """PATCHING — generates a code patch to fix the suspected function."""
-    logger.info("[PATCHING] Delegating to Patch Generator")
-    return run_patch_generator(state)
+    retry = state.get("retry_count", 0)
+    logger.info(f"[PATCHING] Delegating to Patch Generator (attempt {retry + 1}/{MAX_RETRIES})")
+    # On retries, inject cascade_report into state so Patch Generator can learn
+    if retry > 0:
+        cascade = state.get("cascade_report", "")
+        if cascade:
+            logger.info(f"[PATCHING] Passing cascade_report to Patch Generator: {cascade[:100]}...")
+    try:
+        if run_patch_generator:
+            updated = run_patch_generator(state)
+            result = {**state, **updated}
+            result["agents_used"] = state.get("agents_used", "") + "patch_gen,"
+            return result
+        
+        logger.warning("WARNING: patch_generator not available — using mock")
+        return {
+            **state,
+            "patch_diff": "--- a/mock.py\n+++ b/mock.py\n@@ -1 +1 @@\n-old\n+new",
+            "retry_count": state.get("retry_count", 0)
+        }
+    except Exception as e:
+        state['error'] = str(e)
+        state['retry_count'] = state.get('retry_count', 0) + 1
+        raise
 
 
+@with_timeout("PROPAGATING")
 def propagating_node(state: ArcaneState) -> ArcaneState:
     """PROPAGATING — checks for cascade / downstream failures."""
     logger.info("[PROPAGATING] Checking downstream impact")
-    return {
-        **state,
-        "cascade_failure": False,
-        "cascade_report": "No downstream modules affected by this patch.",
-    }
+    try:
+        if _propagator:
+            updated = _propagator.propagate(state)
+            result = {**state, **updated}
+            result["agents_used"] = state.get("agents_used", "") + "propagator,"
+            return result
+            
+        logger.warning("WARNING: cross_file_propagator not available — using mock")
+        return {
+            **state,
+            "cascade_failure": False,
+            "cascade_report": "No downstream modules affected by this patch.",
+        }
+    except Exception as e:
+        state['error'] = str(e)
+        state['retry_count'] = state.get('retry_count', 0) + 1
+        raise
 
 
+@with_timeout("CONFLICT_CHECKING")
 def conflict_checking_node(state: ArcaneState) -> ArcaneState:
     """CONFLICT_CHECKING — detects merge conflicts with main branch."""
     logger.info("[CONFLICT_CHECKING] Verifying merge compatibility")
-    return {
-        **state,
-        "conflict_detected": False,
-    }
+    try:
+        if _conflict_resolver:
+            result = _conflict_resolver.check(state)
+            return {
+                **state,
+                "conflict_detected": result.get("conflicts_found", False),
+                "conflict_action": result.get("action", "no_conflict"),
+                "conflict_score": result.get("score", 1.0),
+                "conflict_details": result.get("details", []),
+                "agents_used": state.get("agents_used", "") + "conflict,",
+            }
+            
+        logger.warning("WARNING: conflict_resolver not available — using mock")
+        return {
+            **state,
+            "conflict_detected": False,
+        }
+    except Exception as e:
+        state['error'] = str(e)
+        state['retry_count'] = state.get('retry_count', 0) + 1
+        raise
 
 
+@with_timeout("VALIDATING")
 def validating_node(state: ArcaneState) -> ArcaneState:
-    """VALIDATING — runs full pytest suite in Docker sandbox."""
+    """VALIDATING — applies patch in Docker sandbox and runs full pytest suite."""
     retry = state.get("retry_count", 0)
     logger.info(f"[VALIDATING] Running test suite (attempt {retry + 1})")
-    updated = validate(state)
-    return {**state, **updated}
+    try:
+        if validate:
+            updated = validate(state)
+            result = {**state, **updated}
+            result["agents_used"] = state.get("agents_used", "") + "validator,"
+            # Auto-approve if confidence >= 85%
+            score = result.get("confidence_score", 0)
+            if isinstance(score, (int, float)) and score >= 85:
+                result["auto_approved"] = True
+                logger.info(f"[VALIDATING] Confidence {score}% >= 85% — auto-approved")
+            return result
+            
+        logger.warning("WARNING: validator_agent not available — using mock")
+        passed = retry <= 1
+        mock_score = 0.95 if passed else 0.30
+        return {
+            **state,
+            "tests_passed": passed,
+            "confidence_score": mock_score,
+            "auto_approved": mock_score >= 0.85,
+        }
+    except Exception as e:
+        state['error'] = str(e)
+        state['retry_count'] = state.get('retry_count', 0) + 1
+        raise
 
 
+@with_timeout("GENERATING_TEST")
 def generating_test_node(state: ArcaneState) -> ArcaneState:
-    """GENERATING_TEST — synthesizes regression test via Claude LLM."""
+    """GENERATING_TEST — synthesizes a regression test via Claude LLM."""
     logger.info("[GENERATING_TEST] Producing regression test via LLM")
-    updated = generate_regression_test(state)
-    return {**state, **updated}
+    try:
+        if generate_regression_test:
+            updated = generate_regression_test(state)
+            result = {**state, **updated}
+            result["agents_used"] = state.get("agents_used", "") + "regtest,"
+            return result
+            
+        logger.warning("WARNING: regression_test_generator not available — using mock")
+        return {**state, "regression_test_code": "def test_placeholder(): pass"}
+    except Exception as e:
+        state['error'] = str(e)
+        state['retry_count'] = state.get('retry_count', 0) + 1
+        raise
 
 
+@with_timeout("CREATING_PR")
 def creating_pr_node(state: ArcaneState) -> ArcaneState:
     """CREATING_PR — opens a pull request on GitHub with the patch + test."""
     logger.info("[CREATING_PR] Opening pull request")
-    sha = state.get("commit_sha", "unknown")[:7]
-    return {
-        **state,
-        "pr_url": f"https://github.com/{state.get('repo_full_name', 'org/repo')}/pull/mock-{sha}",
-    }
+    try:
+        if create_pr:
+            pr_url = create_pr(
+                repo_full_name=state.get("repo_full_name", ""),
+                base_branch="main",
+                commit_sha=state.get("commit_sha", "unknown"),
+                patch_diff=state.get("patch_diff", ""),
+                failing_test=state.get("failing_test", "unknown_test"),
+                validator_summary=f"Tests passed: {state.get('tests_passed')}, "
+                                  f"Confidence: {state.get('confidence_score', 'N/A')}"
+            )
+            result = {**state, "pr_url": pr_url}
+            result["agents_used"] = state.get("agents_used", "") + "pr_agent,"
+            return result
+            
+        logger.warning("WARNING: pr_agent not available — using mock")
+        sha = state.get("commit_sha", "unknown")[:7]
+        return {
+            **state,
+            "pr_url": f"https://github.com/{state.get('repo_full_name', 'org/repo')}/pull/mock-{sha}",
+        }
+    except Exception as e:
+        state['error'] = str(e)
+        state['retry_count'] = state.get('retry_count', 0) + 1
+        raise
 
 
 def done_node(state: ArcaneState) -> ArcaneState:
-    """DONE — terminal success state."""
-    logger.info(f"[DONE] Workflow complete — PR: {state.get('pr_url', 'N/A')}")
+    """DONE — terminal success state with full summary."""
+    elapsed = time.time() - state.get("pipeline_start_time", time.time())
+    patch_lines = len(state.get("patch_diff", "").splitlines())
+    agents = state.get("agents_used", "").strip(",").replace(",", ", ")
+    confidence = state.get("confidence_score", "N/A")
+    auto = state.get("auto_approved", False)
+
+    logger.info(
+        "\n" + "=" * 70 + "\n"
+        "  [DONE] ARCANE Pipeline — SUCCESS SUMMARY\n"
+        "=" * 70 + "\n"
+        f"  PR URL          : {state.get('pr_url', 'N/A')}\n"
+        f"  Total Time      : {elapsed:.1f}s\n"
+        f"  Confidence      : {confidence}\n"
+        f"  Auto-Approved   : {auto}\n"
+        f"  Agents Used     : {agents}\n"
+        f"  Patch Size      : {patch_lines} lines\n"
+        f"  Commit SHA      : {state.get('commit_sha', '?')}\n"
+        f"  Failing Test    : {state.get('failing_test', '?')}\n"
+        + "=" * 70
+    )
     return state
 
 
 def escalated_node(state: ArcaneState) -> ArcaneState:
-    """ESCALATED — retries exhausted; needs human review."""
-    logger.warning(
-        f"[ESCALATED] Auto-repair failed after {state.get('retry_count', 0)} attempts. "
-        f"Commit: {state.get('commit_sha', '?')[:7]}"
+    """ESCALATED — retries exhausted or low confidence; needs human review."""
+    elapsed = time.time() - state.get("pipeline_start_time", time.time())
+    report = (
+        "\n" + "!" * 70 + "\n"
+        "  [ESCALATED] ARCANE Pipeline — ESCALATION REPORT\n"
+        "!" * 70 + "\n"
+        f"  Commit SHA      : {state.get('commit_sha', '?')}\n"
+        f"  Failing Test    : {state.get('failing_test', '?')}\n"
+        f"  Retry Count     : {state.get('retry_count', 0)}/{MAX_RETRIES}\n"
+        f"  Confidence      : {state.get('confidence_score', 'N/A')}\n"
+        f"  Last Error      : {state.get('error', 'None')}\n"
+        f"  Elapsed Time    : {elapsed:.1f}s\n"
+        f"  Agents Used     : {state.get('agents_used', '').strip(',').replace(',', ', ')}\n"
+        + "!" * 70
     )
+    logger.warning(report)
     return {
         **state,
         "error": (
             f"Escalated after {state.get('retry_count', 0)} retries — "
+            f"confidence: {state.get('confidence_score', 'N/A')} — "
             f"human review required for {state.get('failing_test', 'unknown test')}"
         ),
     }
@@ -206,7 +458,14 @@ def after_patching(state: ArcaneState) -> str:
 
 
 def after_validating(state: ArcaneState) -> str:
-    """After VALIDATING: route based on test results + retry count."""
+    """After VALIDATING: route based on test results + confidence + retry count."""
+    confidence = state.get("confidence_score", 0)
+    # Confidence gating: < 60% means do NOT attempt PR, escalate immediately
+    if isinstance(confidence, (int, float)) and confidence < 60:
+        logger.warning(
+            f"[VALIDATING] Confidence {confidence}% < 60% — too low, escalating"
+        )
+        return "escalated"
     if state.get("tests_passed"):
         return "generating_test"
     if state.get("retry_count", 0) >= MAX_RETRIES:

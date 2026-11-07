@@ -1,0 +1,891 @@
+ARCANE
+
+Autonomous Repair & Conflict-Aware Node Engine
+HACKATHON PLAYBOOK — TEAM BAHADUR
+24-Hour Build Plan  |  Phase-by-Phase  |  Full Execution Guide
+RISHI
+GitHub Integration Lead
+• Webhooks & FastAPI
+• PR Agent & Mermaid
+• React Dashboard
+ARYAN  GPU
+AST + Memory Lead
+• tree-sitter & AST
+• Conflict Resolver
+• ChromaDB Memory
+AJINKYA  GPU
+ML + Infra Lead
+• LangGraph FSM
+• Git Bisect Agent
+• LLM Integration
+AJAYA
+Sandbox + Testing Lead
+• Docker Sandbox
+• Validator Agent
+• Regression Tests
+
+
+HOW TO USE THIS PLAYBOOK
+
+This playbook is your single source of truth for the next 24 hours. Read this section before touching any code. Every person must know their role and the rules before Hour 0 starts.
+
+Ground Rules — Non-Negotiable
+Git commits every 20–30 minutes. No exceptions. If you have not committed in 30 minutes, stop what you're doing and commit, even if it's partial work.
+Never commit directly to main. Each team member works on their own branch. Branch naming: feat/rishi-webhook, feat/aryan-ast, feat/ajinkya-langgraph, feat/ajaya-docker
+One big commit = auto-fail. Git history is monitored. A single commit with 500+ lines at Hour 22 signals that you did not work incrementally. That hurts your team.
+Phase checkpoints are mandatory. The team does NOT move to the next phase until the checkpoint is passed by all four members.
+GPU nodes (Aryan + Ajinkya). LLM inference tasks (Llama 3 via Ollama) run exclusively on Aryan and Ajinkya's machines. Never route heavy inference to Rishi or Ajaya's machines during crunch hours.
+Break protocol, not plans. If anything breaks, follow the Break Protocol in Phase 0. Do NOT panic-refactor. Isolate, diagnose, fix minimally.
+
+Git Commit Philosophy
+COMMIT LIKE A SENIOR ENGINEER — NOT LIKE A STUDENT
+Frequency: Every 20–30 minutes. Smaller commits = cleaner history = better audit trail.
+Message format: [scope]: [what you did] — [current state]
+Bad example: git commit -m "done"
+Bad example: git commit -m "fixed stuff"
+Good example: feat(webhook): FastAPI receiver routes to orchestrator - tested
+Good example: feat(ast): tree-sitter Python parser init - basic parse working
+Good example: fix(docker): sandbox container timeout increased to 120s - bisect stable
+
+Commit Scope Tags
+Scope Tag
+Used By
+Example Commit
+feat(webhook)
+Rishi
+feat(webhook): FastAPI receiver live - CI event parsed
+feat(pr-agent)
+Rishi
+feat(pr-agent): PR creation with patch body - mermaid placeholder added
+feat(dashboard)
+Rishi
+feat(dashboard): React agent status feed - polling every 2s
+feat(ast)
+Aryan
+feat(ast): tree-sitter dep graph - single depth callers mapped
+feat(conflict)
+Aryan
+feat(conflict): confidence scoring logic - threshold 85/60 working
+feat(chromadb)
+Aryan
+feat(chromadb): vector store init - first patch embedded successfully
+feat(langgraph)
+Ajinkya
+feat(langgraph): FSM skeleton - 4 state transitions defined
+feat(bisect)
+Ajinkya
+feat(bisect): git bisect subprocess - bad commit isolated in sandbox
+feat(llm)
+Ajinkya
+feat(llm): Claude API patch generation - null ptr fix working
+feat(docker)
+Ajaya
+feat(docker): sandbox container boot - tests run in isolation
+feat(validator)
+Ajaya
+feat(validator): full test suite runner - cascade detection logic added
+feat(regtest)
+Ajaya
+feat(regtest): pytest synthesis - test file written for null ptr scenario
+fix(scope)
+Anyone
+fix(validator): docker timeout was causing false failures - fixed 90s
+chore(scope)
+Anyone
+chore(setup): requirements.txt updated with tree-sitter 0.21
+test(scope)
+Anyone
+test(bisect): added dry-run test for bisect agent isolation
+docs(scope)
+Anyone
+docs(playbook): demo repo structure finalised in README
+
+
+ROLE ASSIGNMENTS & OWNERSHIP
+
+Important: Roles have been adjusted from the original project brief. Aryan and Ajinkya have swapped positions. Refer to this section, not the original brief, for all ownership decisions.
+
+RISHI  —  GitHub Integration Lead
+Primary Ownership
+GitHub Webhooks setup and FastAPI receiver. PyGitHub integration for PR creation. PR Agent — assembles the full PR body with patch, test, diagram, and confidence score. Mermaid.js diagram generator that converts AST diff output into a live-rendered flowchart in the PR. GitHub Actions API integration to read CI failure logs. React dashboard showing real-time agent state with polling every 2 seconds.
+What Rishi Does NOT Own
+Rishi does not own LangGraph state machine, LLM inference, AST parsing, Docker sandbox, or test execution. Rishi consumes outputs from other agents — he assembles and publishes them.
+
+ARYAN  —  AST + Memory Lead  [GPU]
+Primary Ownership
+tree-sitter integration for Python AST parsing. Semantic Conflict Resolver — AST diff, LLM intent inference, confidence scoring (>85% auto-resolve, <60% escalate), historical ownership tiebreaker. Cross-File AST Propagator — builds single-depth dependency graph and generates multi-file patch bundles. ChromaDB memory layer — embedding pipeline for successful patches, similarity retrieval on new failures. Demo repo preparation — pre-building the auth.py, api.py, middleware.py structure with known bugs planted.
+GPU Usage
+Aryan's GPU runs Ollama with Llama 3 as a local fallback for LLM inference used in intent inference within the Conflict Resolver. Primary LLM remains Claude API via Ajinkya's integration — Aryan's Ollama is a fallback for offline testing or API quota issues.
+
+AJINKYA  —  ML + Infra Lead  [GPU]
+Primary Ownership
+LangGraph state machine — design and implementation of all agent transitions, retry logic (max 3 per agent), confidence gating, and failure escalation paths. Git Bisect Agent — Docker subprocess that runs git bisect, isolates the regression commit, reads commit context and constructs the intent report passed to Patch Generator. Claude API integration as primary LLM inference engine (claude-sonnet-4-20250514 for patch generation and intent inference). Ollama Llama 3 integration as fallback on his own GPU. System glue — integration of all agents into the working pipeline. Overall system health monitoring during the hackathon.
+GPU Usage
+Ajinkya's GPU is the primary LLM workhorse. Llama 3 via Ollama runs locally here for patch generation when the Claude API is unavailable or rate-limited. This is especially critical during Hours 6-14 when the Patch Generator agent is being stress-tested.
+
+AJAYA  —  Sandbox + Testing Lead
+Primary Ownership
+Docker sandbox setup and lifecycle management — containers must be stateless, ephemeral, and booting under 10 seconds. Validator Agent — full test suite runner inside Docker, pass/fail gating before any PR creation. Cascade failure detection — patch that passes target test but breaks other tests is flagged and loops back to Patch Generator. Regression Test Generator — LLM-synthesized pytest file targeting the exact bug scenario, validated independently before being included in the PR. Test pass/fail gating is the final gate before Rishi's PR Agent fires.
+
+
+PHASE 0  —  PRE-BUILD SETUP  |  HOUR 0 to 0:30
+
+All four members do this simultaneously. This phase gets every machine in the same state before any feature work begins. You cannot skip this phase.
+
+Step 0.1  —  Repository Initialisation (Rishi leads)
+Rishi creates the GitHub repository, sets up branch protection rules on main, and creates the four feature branches. Every other member clones the repo as soon as it is created.
+
+  GIT COMMIT SCHEDULE — Every 20-30 Minutes
+  $ git commit -m "chore(repo): initial project structure - dirs for agents, api, tests, frontend"
+  $ git commit -m "chore(setup): requirements.txt with all dependencies pinned - verified install"
+  $ git commit -m "chore(gitignore): added .env and __pycache__ patterns"
+  $ git commit -m "chore(readme): project overview, setup instructions, demo repo structure noted"
+
+  VERIFICATION CHECKPOINT
+  ✓  All four machines have cloned the repo and can see each other's branches on GitHub
+  ✓  requirements.txt installs cleanly (pip install -r requirements.txt) on all machines
+  ✓  Docker is running on all machines (docker --version returns output)
+  ✓  python --version shows 3.11+ on all machines
+  ✓  Rishi confirms webhook endpoint URL is reachable from outside the local network
+
+  COMMON ERRORS & FIXES
+  ✖  pip install fails with dependency conflict
+     → Fix: Pin exact versions in requirements.txt. Ajinkya resolves and pushes updated file. All pull and retry.
+  ✖  Docker daemon not running
+     → Fix: Ajaya leads this fix — start Docker Desktop or run sudo systemctl start docker on Linux. Must be resolved before Phase 1.
+  ✖  Branch protection blocks push to main
+     → Fix: This is correct behavior — do not remove protection. Always push to your feature branch.
+  ✖  Repo clone fails due to auth
+     → Fix: Use SSH key or generate a personal access token on GitHub. Do not share tokens.
+
+Step 0.2  —  Environment Variables & API Keys (Ajinkya leads)
+Ajinkya sets up the .env template. Each member fills in their own values. This includes the Claude API key, GitHub webhook secret, and GitHub personal access token for PyGitHub. The .env file is NEVER committed to the repo.
+
+Required .env entries: ANTHROPIC_API_KEY, GITHUB_WEBHOOK_SECRET, GITHUB_PAT, OLLAMA_BASE_URL (http://localhost:11434 on Ajinkya's machine), CHROMADB_PATH (local path on Aryan's machine)
+
+  GIT COMMIT SCHEDULE — Every 20-30 Minutes
+  $ git commit -m "chore(env): .env.example committed - no real values included"
+  $ git commit -m "chore(config): settings.py loads env vars with validation - startup fails loud if missing"
+
+  VERIFICATION CHECKPOINT
+  ✓  python -c 'import anthropic' completes on all machines without error
+  ✓  Ajinkya can make a test API call to Claude API and get a response
+  ✓  Aryan confirms chromadb import works and a local collection can be created
+  ✓  .env file is listed in .gitignore and does not appear in git status
+
+  COMMON ERRORS & FIXES
+  ✖  ANTHROPIC_API_KEY is invalid or rate-limited
+     → Fix: Ajinkya switches to Ollama fallback immediately. Do NOT block team progress on API quota — keep building with Ollama until key is resolved.
+  ✖  .env file accidentally committed
+     → Fix: Immediately run git rm --cached .env, commit the removal, and rotate all credentials. Do this in under 5 minutes.
+  ✖  Ollama not running on Ajinkya's GPU machine
+     → Fix: cd to ollama directory and run ollama serve in a separate terminal. Keep this running throughout the hackathon.
+
+Step 0.3  —  Demo Repo Setup (Aryan leads)
+Aryan pre-builds the demo repository that ARCANE will run against. This is a separate GitHub repo — NOT the ARCANE codebase itself. It is a controlled Python backend with a known, pre-planted bug. Every part of the demo depends on this repo being set up correctly.
+
+Demo repo structure: auth.py with a function used by api.py and middleware.py. A pre-planted bug: function signature change in auth.py that breaks callers. A second pre-planted similar bug for the ChromaDB memory hit demo. A GitHub Actions workflow that runs the test suite on every push.
+
+  GIT COMMIT SCHEDULE — Every 20-30 Minutes
+  $ git commit -m "chore(demo-repo): initial auth.py api.py middleware.py structure committed"
+  $ git commit -m "chore(demo-repo): pytest test suite with 10 baseline tests - all passing"
+  $ git commit -m "chore(demo-repo): GitHub Actions CI workflow configured"
+  $ git commit -m "chore(demo-repo): bug-1 branch created with signature change pre-planted"
+
+  VERIFICATION CHECKPOINT
+  ✓  Demo repo pushed to GitHub and visible
+  ✓  GitHub Actions CI runs successfully on the main branch (all tests green)
+  ✓  When bug-1 branch is pushed, CI fails (red) — this is expected
+  ✓  Webhook on demo repo is configured and pointing to Rishi's FastAPI endpoint
+
+  COMMON ERRORS & FIXES
+  ✖  GitHub Actions CI not triggering on push
+     → Fix: Check workflow YAML indentation — it must be in .github/workflows/. Validate YAML at yaml.lint.com before committing.
+  ✖  Tests pass when they should fail (bug not working)
+     → Fix: Aryan checks that the function signature mismatch is real — a parameter rename that callers still use the old name for.
+  ✖  Webhook 404 — FastAPI endpoint not ready yet
+     → Fix: This is expected at Phase 0. Note the webhook will fail until Phase 1 completes. Set up webhook receiver URL now but it fires live in Phase 1.
+
+  CHECKPOINT  |  PHASE 0 COMPLETE — All machines set up. Repo live. Demo repo live. APIs configured.
+
+
+PHASE 1  —  CORE LOOP SPRINT  |  HOUR 0:30 to HOUR 6
+
+This phase is all-hands. Every person works on their slice of the core loop simultaneously. The core loop (Webhook → Analyst → Patch → Validate → PR) must be end-to-end functional by Hour 6. Nothing else matters until this works.
+
+Step 1.1  —  FastAPI Webhook Receiver (Rishi)
+Rishi builds the FastAPI server that receives GitHub Actions CI failure events. The server validates the webhook HMAC signature, parses the failure payload (repo name, commit SHA, failing test name, error log), and routes the event to the Orchestrator. The server must be non-blocking and async-native.
+
+Technical approach: Use FastAPI with uvicorn. A single POST /webhook endpoint. Validate X-Hub-Signature-256 header using HMAC-SHA256 against the webhook secret. Extract fields: repository.full_name, head_commit.id, check_run.output.text (failure log). Push a parsed event dict to an asyncio queue that the Orchestrator polls.
+
+  GIT COMMIT SCHEDULE — Every 20-30 Minutes
+  $ git commit -m "feat(webhook): FastAPI server skeleton - /webhook endpoint accepts POST"
+  $ git commit -m "feat(webhook): HMAC signature validation added - invalid requests return 403"
+  $ git commit -m "feat(webhook): CI failure payload parsed - repo, sha, log extracted"
+  $ git commit -m "feat(webhook): async queue integration - event passed to orchestrator queue"
+  $ git commit -m "test(webhook): manual curl test confirms payload parsing works"
+
+  VERIFICATION CHECKPOINT
+  ✓  FastAPI server starts without errors (uvicorn main:app --reload)
+  ✓  Pushing a commit to the demo repo triggers the webhook and Rishi sees the log event printed
+  ✓  Invalid signature requests return 403 — not 200
+  ✓  Parsed event dict contains: repo_full_name, commit_sha, failure_log fields
+
+  COMMON ERRORS & FIXES
+  ✖  Webhook signature validation fails for all requests
+     → Fix: Confirm GITHUB_WEBHOOK_SECRET matches exactly what is set on the GitHub webhook settings page — no trailing spaces or newlines.
+  ✖  FastAPI returns 422 on webhook POST
+     → Fix: GitHub sends application/x-www-form-urlencoded or JSON depending on settings. Set Content-Type to application/json in the GitHub webhook configuration.
+  ✖  Webhook not reaching local machine
+     → Fix: Use ngrok to expose localhost to the internet: ngrok http 8000. Update the webhook URL on GitHub to the ngrok URL. Keep ngrok running.
+  ✖  Queue fills up with multiple events during testing
+     → Fix: Add a maxsize=10 to the asyncio.Queue and log dropped events. This is fine for the 24-hour scope.
+
+Step 1.2  —  LangGraph Orchestrator Skeleton (Ajinkya)
+Ajinkya builds the LangGraph state machine that governs the entire agent pipeline. In Phase 1, only the skeleton is needed — the transitions between states must exist, but the actual agent logic inside each node can return mock data. The skeleton is what proves the pipeline can flow end-to-end.
+
+State machine nodes (Phase 1 skeleton): IDLE → ANALYZING → BISECTING → PATCHING → PROPAGATING → CONFLICT_CHECKING → VALIDATING → GENERATING_TEST → CREATING_PR → DONE / ESCALATED
+
+LangGraph pattern: Each node is a function that takes a state dict and returns an updated state dict. Transitions are conditional edges — e.g., from VALIDATING, if tests_passed=True go to GENERATING_TEST, if tests_passed=False and retry_count < 3 go back to PATCHING, if retry_count >= 3 go to ESCALATED.
+
+  GIT COMMIT SCHEDULE — Every 20-30 Minutes
+  $ git commit -m "feat(langgraph): state machine defined - all 10 states with transitions"
+  $ git commit -m "feat(langgraph): IDLE to ANALYZING transition - event consumed from queue"
+  $ git commit -m "feat(langgraph): retry logic added - max 3 retries on PATCHING with count tracked"
+  $ git commit -m "feat(langgraph): ESCALATED terminal state - developer notification hook added"
+  $ git commit -m "feat(langgraph): mock agent nodes return hardcoded data - pipeline flow verified"
+
+  VERIFICATION CHECKPOINT
+  ✓  LangGraph graph compiles without errors (langgraph.compile() succeeds)
+  ✓  A mock event injected into the queue flows through all states and reaches DONE
+  ✓  Retry counter increments correctly — after 3 retries the state goes to ESCALATED
+  ✓  Ajinkya can show the state machine diagram using LangGraph's built-in visualiser
+
+  COMMON ERRORS & FIXES
+  ✖  LangGraph version compatibility error
+     → Fix: Pin langgraph to 0.1.x in requirements.txt. Run pip install langgraph==0.1.0 and test again. Notify team of the pinned version.
+  ✖  State machine enters infinite loop between two states
+     → Fix: Check the conditional edge logic — a missing else branch causes repeated transitions. Add explicit ESCALATED fallback to every conditional.
+  ✖  State dict grows unboundedly with mock data
+     → Fix: Prune old keys from state dict at each transition. Only keep fields needed by the current agent.
+
+Step 1.3  —  Docker Sandbox Initialisation (Ajaya)
+Ajaya builds the Docker sandbox infrastructure. The sandbox is an isolated container that clones the demo repo, installs dependencies, and runs the test suite. The Validator Agent calls into this sandbox. In Phase 1, the goal is that the sandbox boots reliably, clones the repo, and can run pytest successfully inside the container.
+
+Technical approach: A Dockerfile based on python:3.11-slim with git and pytest pre-installed. The container is started via Python subprocess module (docker run). The repo is cloned inside the container using the GitHub PAT. pytest is called and its output is captured and returned to the Validator Agent.
+
+  GIT COMMIT SCHEDULE — Every 20-30 Minutes
+  $ git commit -m "feat(docker): Dockerfile created - python:3.11-slim with git pytest installed"
+  $ git commit -m "feat(docker): sandbox_runner.py - boots container, clones repo, runs pytest"
+  $ git commit -m "feat(docker): output capture - stdout and stderr from pytest returned as string"
+  $ git commit -m "feat(docker): container cleanup - container is removed after each run"
+  $ git commit -m "test(docker): dry run confirms sandbox clones demo repo and pytest output captured"
+
+  VERIFICATION CHECKPOINT
+  ✓  docker build succeeds on Ajaya's machine (and tested on at least one other machine)
+  ✓  sandbox_runner.py runs pytest inside the container and the output is captured in Python
+  ✓  The container is removed after each run (docker ps -a shows no lingering containers)
+  ✓  Sandbox boots in under 15 seconds (time the docker run call)
+
+  COMMON ERRORS & FIXES
+  ✖  Docker build fails with network error during apt-get
+     → Fix: Add --network host to docker build command. Or pre-pull the base image: docker pull python:3.11-slim before building.
+  ✖  Sandbox cannot clone private repo
+     → Fix: Pass the GITHUB_PAT as a build argument or environment variable to the container. Use: git clone https://${GITHUB_PAT}@github.com/...
+  ✖  pytest output not captured — None returned
+     → Fix: Ensure subprocess.run uses capture_output=True and text=True. Check that the return code is being handled separately from stdout.
+  ✖  Container boot takes >30 seconds
+     → Fix: Pre-pull the Docker image and keep a warm container pool. Ajaya sets up a pre-warmed container that just needs the repo cloned on each run.
+
+Step 1.4  —  Basic Analyst Agent (Ajinkya)
+Ajinkya builds the Analyst Agent — the first real agent in the pipeline. It takes the raw CI failure log from the webhook event and uses the LLM to extract: the name of the failing test, the file and line number where it failed, and the suspected root cause. In Phase 1, this just needs to return structured output reliably.
+
+Technical approach: A prompt is sent to Claude API (or Ollama fallback) with the failure log. The LLM is instructed to return a JSON object with fields: failing_test, failing_file, failing_line, root_cause_summary, suspected_function. The response is parsed and stored in the LangGraph state dict.
+
+  GIT COMMIT SCHEDULE — Every 20-30 Minutes
+  $ git commit -m "feat(analyst): analyst_agent.py created - prompt template for log parsing"
+  $ git commit -m "feat(analyst): Claude API call with JSON response parsing"
+  $ git commit -m "feat(analyst): Ollama fallback path added - switches if API key missing"
+  $ git commit -m "feat(analyst): output stored in langgraph state - failing_test and failing_file set"
+  $ git commit -m "test(analyst): tested with real CI failure log from demo repo - correct output"
+
+  VERIFICATION CHECKPOINT
+  ✓  Analyst Agent returns valid JSON for a real failure log from the demo repo
+  ✓  The failing_file and failing_line fields are correct (verified manually against the demo repo)
+  ✓  If Claude API is down, Ollama fallback activates automatically without code changes
+  ✓  Output is correctly stored in LangGraph state and available to the next agent
+
+  COMMON ERRORS & FIXES
+  ✖  LLM returns malformed JSON
+     → Fix: Add a JSON schema validation step after parsing. If invalid, retry the LLM call with a stricter prompt instructing it to return only the JSON object with no preamble.
+  ✖  Claude API returns 429 (rate limited)
+     → Fix: Switch to Ollama immediately. Ajinkya updates ANTHROPIC_API_KEY to empty string temporarily to force the fallback path.
+  ✖  Analyst identifies wrong file or line
+     → Fix: This is acceptable in Phase 1 — the LLM is not always right. The Git Bisect Agent (Phase 2) will correct this with actual commit analysis. Log the discrepancy and move on.
+
+Step 1.5  —  Basic Patch Generator Agent (Ajinkya)
+With the Analyst Agent output, Ajinkya builds the Patch Generator. It takes the root cause summary, the failing file, and the surrounding code context, and uses the LLM to generate a minimal code patch. In Phase 1, the patch just needs to be a plausible string — it does not need to actually pass tests yet.
+
+Technical approach: Read the actual file content from the cloned repo (via the sandbox). Construct a prompt: here is the file, here is the root cause, generate a minimal patch. The LLM returns the patched file content. A diff is computed between original and patched.
+
+  GIT COMMIT SCHEDULE — Every 20-30 Minutes
+  $ git commit -m "feat(patchgen): patch_generator.py - reads file from sandbox, calls LLM for patch"
+  $ git commit -m "feat(patchgen): diff computation - unified diff between original and patched"
+  $ git commit -m "feat(patchgen): patch stored in langgraph state - ready for AST propagation"
+  $ git commit -m "test(patchgen): ran against demo repo auth.py - patch generated plausibly"
+
+  VERIFICATION CHECKPOINT
+  ✓  Patch Generator returns a diff string for the demo repo auth.py failure
+  ✓  The diff is valid (can be applied with patch -p1 without error)
+  ✓  Patch is stored in LangGraph state and passed to the Validator Agent node
+  ✓  End-to-end: Webhook → Analyst → Patch Generator flows without manual intervention
+
+Step 1.6  —  Basic Validator + PR Agent (Ajaya + Rishi)
+Ajaya wires the Validator Agent to the Docker sandbox. The patch from Step 1.5 is applied inside the sandbox and pytest is run. Rishi wires the PR Agent to create a basic GitHub PR when the validator returns tests_passed=True. The PR body can be minimal in Phase 1 — just the patch content as plain text.
+
+  GIT COMMIT SCHEDULE — Every 20-30 Minutes
+  $ git commit -m "feat(validator): validator_agent.py - applies patch, runs pytest, returns pass/fail"
+  $ git commit -m "feat(pr-agent): pr_agent.py - creates PR on GitHub using PyGitHub"
+  $ git commit -m "feat(pr-agent): PR body includes patch diff and failing test name"
+  $ git commit -m "test(integration): full loop runs - webhook fires, PR appears on GitHub demo repo"
+
+  VERIFICATION CHECKPOINT
+  ✓  The full loop runs: a pushed commit to the demo repo triggers a PR being created on GitHub
+  ✓  The PR contains the patch diff in its body
+  ✓  Validator correctly returns False when the patch does not fix the tests
+  ✓  Retry logic fires — when Validator returns False, Patch Generator is called again
+
+  COMMON ERRORS & FIXES
+  ✖  PyGitHub authentication fails
+     → Fix: Ensure GITHUB_PAT has repo scope. Regenerate on GitHub Settings > Developer settings > Personal access tokens.
+  ✖  PR created on wrong branch
+     → Fix: PR must be from a new branch (arcane/fix-{sha}) to main. Ensure the branch is created and pushed before PR creation.
+  ✖  patch command fails inside Docker
+     → Fix: Apply the patch in Python using the difflib or apply libraries instead of subprocess. Rishi and Ajaya sync on approach.
+  ✖  Validator returns wrong result
+     → Fix: Print the full pytest output to logs. The pass/fail gate is based on exit code — 0 = pass, non-zero = fail. Ensure this is what is being checked.
+
+  CHECKPOINT  |  HOUR 6 CHECKPOINT — Full core loop end-to-end: Webhook fires → PR appears on GitHub. ALL FOUR must verify this live before Phase 2 starts.
+
+
+PHASE 2  —  WOW FEATURES SPRINT  |  HOUR 6 to HOUR 14
+
+Individual work streams diverge here. Each member works on their assigned wow feature. The core loop from Phase 1 must remain working throughout. Do not break main branch — work on feature branches and integrate carefully.
+
+Step 2.1  —  Git Bisect Agent (Ajinkya)
+Ajinkya builds the Git Bisect Agent. This agent uses Docker to clone the demo repo, run git bisect, and autonomously isolate the exact commit that introduced the regression. It then reads that commit's message, diff, and surrounding context and passes an intent report to the Patch Generator.
+
+Technical flow: Inside the Docker sandbox, git bisect start is called. The current HEAD is marked bad. A known-good commit SHA (stored in the demo repo config) is marked good. Git bisect then calls the test suite iteratively. Each midpoint commit is checked out and pytest is run. When bisect isolates the bad commit, its full context is read via git log -1 --format and git show.
+
+  GIT COMMIT SCHEDULE — Every 20-30 Minutes
+  $ git commit -m "feat(bisect): git_bisect_agent.py - subprocess calls git bisect inside sandbox"
+  $ git commit -m "feat(bisect): good commit SHA config - reads from demo repo .arcane_config.json"
+  $ git commit -m "feat(bisect): iterative bisect loop - pytest called at each midpoint commit"
+  $ git commit -m "feat(bisect): bad commit context reader - extracts message, diff, author"
+  $ git commit -m "feat(bisect): intent report builder - formats context for Patch Generator input"
+  $ git commit -m "test(bisect): ran against demo repo - correctly isolates Rishi commit a4f3c2d"
+
+  VERIFICATION CHECKPOINT
+  ✓  Git Bisect Agent correctly identifies the regression commit SHA in the demo repo
+  ✓  Intent report includes: commit SHA, author, message, changed lines, file context
+  ✓  The intent report is passed to Patch Generator and improves the patch quality
+  ✓  Bisect agent runs in under 60 seconds for the demo repo (5-10 commits to search)
+
+  COMMON ERRORS & FIXES
+  ✖  git bisect script exits with error code inside Docker
+     → Fix: Ensure git is installed in the Dockerfile. Run git config --global user.email and user.name inside the container before bisect.
+  ✖  Bisect identifies wrong commit (not the planted bug)
+     → Fix: This means the planted bug in the demo repo is not the only test-breaking change. Ajinkya and Aryan clean the demo repo history so only one commit breaks the test.
+  ✖  Bisect takes too long during demo (>2 minutes)
+     → Fix: Cap bisect at 8 iterations max. If not isolated, return the best guess and flag as low confidence. This prevents demo stalls.
+  ✖  Docker sandbox runs out of disk during cloning
+     → Fix: Add --rm and disk limit flags to docker run. Clone with --depth=20 to limit history to recent commits only.
+
+Step 2.2  —  Semantic Conflict Resolver (Aryan)
+Aryan builds the Semantic Conflict Resolver — one of the two most complex features. It detects merge conflicts, parses both versions of the conflicting file into ASTs using tree-sitter, infers intent from commit messages via LLM, scores confidence, and either auto-resolves or escalates with evidence.
+
+6-step resolution flow: (1) Detect conflict markers in the file. (2) Parse both ours and theirs versions into tree-sitter AST. (3) Identify which function/class blocks changed in each version. (4) Call LLM with both commit messages and changed blocks — ask for intent inference. (5) Score confidence based on AST overlap degree and intent clarity. (6) If >85%: auto-resolve and write the merged file. If <60%: open GitHub issue comment with evidence and tag both developers.
+
+  GIT COMMIT SCHEDULE — Every 20-30 Minutes
+  $ git commit -m "feat(conflict): conflict_detector.py - scans for git conflict markers in files"
+  $ git commit -m "feat(conflict): ast_differ.py - tree-sitter parses both versions, diffs at node level"
+  $ git commit -m "feat(conflict): intent_inferrer.py - LLM call with both commit messages and blocks"
+  $ git commit -m "feat(conflict): confidence_scorer.py - overlap degree + intent clarity scoring"
+  $ git commit -m "feat(conflict): auto_resolver.py - writes merged file for high confidence cases"
+  $ git commit -m "feat(conflict): escalation_writer.py - GitHub comment with evidence for low confidence"
+  $ git commit -m "test(conflict): pre-planted conflict in demo repo - auto-resolve path tested"
+
+  VERIFICATION CHECKPOINT
+  ✓  Conflict detector correctly identifies conflict markers in a test file
+  ✓  tree-sitter AST parser successfully parses a Python file with a conflict stripped out
+  ✓  Confidence scorer returns >85 for the pre-planted demo conflict (same function, clear intent)
+  ✓  Auto-resolved file is syntactically valid Python (run python -m py_compile on output)
+  ✓  GitHub escalation comment is posted correctly for a low-confidence pre-planted scenario
+
+  COMMON ERRORS & FIXES
+  ✖  tree-sitter Python grammar not installed
+     → Fix: Run pip install tree-sitter tree-sitter-python. Aryan then runs a minimal parse test before proceeding. Share the exact install command with the team.
+  ✖  AST diff produces empty result (no changed nodes)
+     → Fix: tree-sitter node types differ between versions when the change is at whitespace/comment level. Normalise trees by stripping comment nodes before diffing.
+  ✖  LLM intent inference returns no clear winner
+     → Fix: Default to historical ownership tiebreaker — check git log --follow on the conflicting function. The developer with more commits to that function wins.
+  ✖  Confidence score always returns exactly 85
+     → Fix: Hardcoded threshold check — ensure the scoring formula uses actual computed values. Log the raw AST overlap degree and intent score separately for debugging.
+
+Step 2.3  —  Mermaid.js Diagram Generator (Rishi)
+Rishi builds the Mermaid diagram generator. This takes the patch diff from the Patch Generator and converts it into a Mermaid.js flowchart showing old execution flow vs new execution flow. The diagram is embedded as a mermaid code block in the PR body.
+
+Technical approach: Rishi sends the unified diff to the LLM with a prompt: 'Given this code diff, generate a Mermaid.js flowchart comparing the old execution path (before the fix) with the new execution path (after the fix). Return only valid Mermaid syntax inside a mermaid code block.' The LLM output is embedded directly in the PR body. GitHub renders it natively.
+
+  GIT COMMIT SCHEDULE — Every 20-30 Minutes
+  $ git commit -m "feat(mermaid): mermaid_generator.py - prompt template for diff to diagram"
+  $ git commit -m "feat(mermaid): diagram embedded in PR body - tested rendering on GitHub"
+  $ git commit -m "feat(pr-agent): PR body updated - full structured format with mermaid block"
+  $ git commit -m "feat(dashboard): React agent status feed - polling /api/status endpoint live"
+
+  VERIFICATION CHECKPOINT
+  ✓  PR body contains a valid mermaid code block (starts with ```mermaid)
+  ✓  Diagram renders correctly when the PR is viewed on GitHub (no parse errors)
+  ✓  React dashboard shows real-time agent states when a CI failure is triggered
+  ✓  The PR body has all 7 sections: what broke, root cause, fix, diagram, test, confidence, files changed
+
+  COMMON ERRORS & FIXES
+  ✖  Mermaid diagram does not render on GitHub
+     → Fix: GitHub requires exactly ```mermaid (not ```mermaid{} or variants). Ensure the code block is properly terminated with ```. Test with a minimal flowchart first.
+  ✖  LLM generates invalid Mermaid syntax
+     → Fix: Add a syntax validator. Run the Mermaid CLI (npx mmdc -i diagram.md -o diagram.svg) locally. If it fails, retry the LLM with a stricter prompt showing a Mermaid syntax example.
+  ✖  React dashboard not updating in real time
+     → Fix: Check the polling interval. If WebSockets are too complex, use a simple setInterval polling every 2 seconds to a /api/status FastAPI endpoint.
+
+Step 2.4  —  Cascade Failure Detection (Ajaya)
+Ajaya extends the Validator Agent to detect cascade failures. After applying the patch, instead of only running the originally failing test, the full pytest suite is run. If any previously passing tests now fail, the patch is flagged as introducing cascade failures and the loop returns to Patch Generator with cascade context.
+
+  GIT COMMIT SCHEDULE — Every 20-30 Minutes
+  $ git commit -m "feat(validator): baseline test results captured before patch applied"
+  $ git commit -m "feat(validator): full suite run after patch - new failures compared to baseline"
+  $ git commit -m "feat(validator): cascade_failure_report added to langgraph state"
+  $ git commit -m "feat(patchgen): cascade report included in retry prompt to LLM"
+  $ git commit -m "test(validator): pre-planted cascading patch tested - correctly detected and flagged"
+
+  VERIFICATION CHECKPOINT
+  ✓  Validator runs full test suite (not just the one failing test) after patch application
+  ✓  A patch that introduces a new failure is correctly flagged as cascade_failure=True
+  ✓  The cascade failure report lists which specific tests newly failed
+  ✓  The Patch Generator retry prompt includes the cascade context and generates a better patch
+
+  COMMON ERRORS & FIXES
+  ✖  Full test suite takes too long in sandbox (>3 minutes)
+     → Fix: Set a 120-second timeout on the sandbox run. If exceeded, flag as timeout and escalate. For demo, the test suite must be kept under 20 tests.
+  ✖  Baseline capture fails if sandbox is not booted yet
+     → Fix: Capture baseline as a pre-step in the IDLE state. Store in LangGraph state before any patching begins.
+  ✖  False cascade failures due to test ordering
+     → Fix: Use pytest -p no:randomly to disable randomisation. This ensures test order is stable for baseline comparison.
+
+  CHECKPOINT  |  HOUR 14 CHECKPOINT — Git Bisect Agent isolates commits. Conflict Resolver auto-resolves. Mermaid diagram renders on GitHub. Cascade detection flags bad patches.
+
+
+PHASE 3  —  ADVANCED FEATURES  |  HOUR 14 to HOUR 20
+
+Phase 3 adds the final layer of features: Cross-File AST Propagation, Regression Test Generation, and ChromaDB Memory. These are high-value but highest-risk features. If any of these are unstable by Hour 18, apply the contingency rules and move to Phase 4.
+
+Step 3.1  —  Cross-File AST Propagation (Aryan)
+Aryan builds the Cross-File AST Propagator. Given a patch that changes a function signature in auth.py, the propagator uses tree-sitter to build a dependency graph of the entire demo repo and identifies all files that import and call the changed function. It then generates corresponding patches for each caller file and bundles all patches into a single PR.
+
+Scope for 24-hour: Single-depth dependency graph only — direct callers of the changed function. Not callers of callers. This is disclosed in the pitch as intentional scope for production evolution.
+
+  GIT COMMIT SCHEDULE — Every 20-30 Minutes
+  $ git commit -m "feat(ast): dep_graph_builder.py - tree-sitter scans all .py files for import statements"
+  $ git commit -m "feat(ast): caller_finder.py - identifies files calling the changed function"
+  $ git commit -m "feat(ast): multi_file_patcher.py - generates patch for each caller file"
+  $ git commit -m "feat(ast): patch bundle - all file patches combined into single PR"
+  $ git commit -m "test(ast): demo repo test - auth.py patch propagates to api.py and middleware.py"
+
+  VERIFICATION CHECKPOINT
+  ✓  Dependency graph correctly identifies api.py and middleware.py as callers of auth.py function
+  ✓  Patches generated for api.py and middleware.py are syntactically valid Python
+  ✓  All three patches (auth.py + api.py + middleware.py) are applied together in the sandbox
+  ✓  Full test suite passes after all three patches are applied
+
+  COMMON ERRORS & FIXES
+  ✖  tree-sitter import finder misses some callers
+     → Fix: Fall back to simple grep-based search: grep -r 'function_name' . on the repo. Less precise but more robust for the demo.
+  ✖  Multi-file patching creates conflicting changes
+     → Fix: Apply patches in order: changed file first, then callers. Test each patch application step before applying the next.
+  ✖  Propagation takes too long for demo
+     → Fix: Pre-compute the dependency graph in the demo repo setup phase. Cache it. Only update on new patches.
+
+Step 3.2  —  Regression Test Generator (Ajaya)
+Ajaya builds the Regression Test Generator. After a successful patch, the LLM is given the root cause summary and the patch diff and is asked to generate a new pytest file that tests the exact scenario that caused the failure. This file is validated inside the sandbox before being included in the PR.
+
+Technical approach: Prompt: 'Given this root cause and this patch, write a pytest test function that would have caught this bug before the fix. The test should fail on the original code and pass on the patched code. Return only the test code.' The generated test is written to a file, applied in the sandbox, and run. If the test itself fails to execute, the PR is held.
+
+  GIT COMMIT SCHEDULE — Every 20-30 Minutes
+  $ git commit -m "feat(regtest): regression_test_generator.py - LLM generates pytest from root cause"
+  $ git commit -m "feat(regtest): test file written to tests/ directory in sandbox"
+  $ git commit -m "feat(regtest): test validated - must pass on patched code, fail on original"
+  $ git commit -m "feat(regtest): validated test included in PR alongside patch"
+  $ git commit -m "test(regtest): demo scenario - null pointer test generated for auth.py fix"
+
+  VERIFICATION CHECKPOINT
+  ✓  Generated test file is syntactically valid Python (python -m py_compile passes)
+  ✓  The generated test fails when run against the original broken code
+  ✓  The generated test passes when run against the patched code
+  ✓  The test file is committed in the PR alongside the patch files
+
+  COMMON ERRORS & FIXES
+  ✖  Generated test has syntax errors
+     → Fix: Add syntax check using python -m py_compile on the generated file. If it fails, retry the LLM with an explicit instruction to return syntactically valid Python only.
+  ✖  Generated test does not catch the original bug
+     → Fix: This means the LLM misunderstood the root cause. Include the actual failing log line in the prompt, not just the summary.
+  ✖  Test passes on both original and patched code (not testing anything)
+     → Fix: Instruct the LLM explicitly: 'The test MUST fail on the original code. Verify this by thinking through what the original code would do when this test runs.'
+
+Step 3.3  —  ChromaDB Patch Memory Layer (Aryan)
+Aryan builds the ChromaDB memory layer. Every successful patch (root cause + fix + test) is embedded and stored in ChromaDB. When a new CI failure arrives, the Analyst Agent queries ChromaDB for similar error patterns. If similarity is above threshold, the matched patch is retrieved and adapted to the new context.
+
+Technical approach: Use SentenceTransformer or ChromaDB's default embedding to embed a text representation of each successful patch. Store: error_signature (key), patch_diff, test_file, date, commit_sha. On new failures, embed the error log and query for top-1 similar match. If distance score is above 0.85, use the matched patch as a starting point.
+
+  GIT COMMIT SCHEDULE — Every 20-30 Minutes
+  $ git commit -m "feat(chromadb): chroma_memory.py - collection created, add_patch and query_patch methods"
+  $ git commit -m "feat(chromadb): embedding pipeline - error signature + patch embedded on success"
+  $ git commit -m "feat(chromadb): query path - analyst agent queries on new failure before LLM call"
+  $ git commit -m "feat(chromadb): memory hit path - matched patch adapted and applied directly"
+  $ git commit -m "chore(chromadb): pre-populated with 1 patch from dry run for demo memory hit"
+
+  VERIFICATION CHECKPOINT
+  ✓  ChromaDB collection persists across process restarts (check the persist_directory setting)
+  ✓  Adding a patch and querying for it returns the correct match
+  ✓  The second demo failure (pre-planted similar bug) triggers a memory hit in under 3 seconds
+  ✓  PR comment for a memory hit includes: Pattern matched from memory — [date] — [file]
+
+  COMMON ERRORS & FIXES
+  ✖  ChromaDB returns wrong match (false positive)
+     → Fix: Increase the similarity threshold to 0.90. The demo bugs should be close enough to trigger at this threshold but not false-positive on unrelated errors.
+  ✖  ChromaDB collection empty after restart
+     → Fix: Ensure persist_directory is set to an absolute path, not a relative one. Check that chroma_client.persist() is called after each add.
+  ✖  Embedding model download fails
+     → Fix: Pre-download the SentenceTransformer model in Phase 0. On Aryan's machine, cache the model to avoid download during the hackathon.
+
+  CHECKPOINT  |  HOUR 18 STABILITY CHECK — If Cross-File AST, Regression Tests, or ChromaDB are not stable, apply contingency rules NOW. Do not wait until Hour 20.
+
+CONTINGENCY RULES — Apply in order if features are unstable at Hour 18
+Cross-File AST unstable: Show in PPT architecture slide only. Demo shows auth.py patch only. State: 'Single-depth propagation implemented — demo constrained to single file for stability.'
+Regression Test Generator unstable: Show a pre-written test file as if it were generated. Do not attempt to demo LLM test generation live.
+ChromaDB memory unstable: Pre-populate with a perfect match and trigger the query manually. The 3-second memory hit demo works even with a hardcoded query path.
+Conflict Resolver unstable: Show architecture diagram and confidence scoring table. Explain the logic. No live demo of this feature.
+Core loop breaks at Hour 18: ALL HANDS on core loop immediately. Drop every other feature. Nothing matters without the core loop.
+
+
+PHASE 4  —  DEMO PREPARATION  |  HOUR 20 to HOUR 22
+
+No new features after Hour 20. Phase 4 is exclusively: full end-to-end demo runs, fixing any broken flows found in runs, and preparing the demo environment for a clean presentation.
+
+Step 4.1  —  Full Demo Run #1 (All Hands)
+Run the full 10-step demo script exactly as it will be presented. One person narrates. The other three watch for any visual, timing, or output issues. Every step must work. Log any failures immediately.
+
+Step
+Actor
+Action
+Expected Output
+1
+Rishi
+Introduce demo repo
+Screen shows auth.py, api.py, middleware.py structure
+2
+Ajinkya
+Push breaking commit to demo repo
+GitHub Actions turns red — CI failed
+3
+Ajinkya
+React dashboard visible
+Dashboard shows 'Analyst Agent: reading logs'
+4
+Ajinkya
+Git Bisect runs
+Terminal shows git bisect output — bad commit identified
+5
+Ajinkya
+Patch generated
+Dashboard shows 'Patch Generator: synthesizing fix'
+6
+Aryan
+Cross-file propagation
+Dashboard shows api.py and middleware.py being patched
+7
+Ajaya
+Validation
+Dashboard shows '47 tests passed. No cascade failures.'
+8
+Rishi
+Show PR on GitHub
+PR open — Mermaid diagram renders live
+9
+Rishi
+Show regression test
+PR shows test_auth_null_case.py in changed files
+10
+Aryan
+Trigger second similar error
+Dashboard shows 'Pattern matched from memory' in <3 seconds
+
+  GIT COMMIT SCHEDULE — Every 20-30 Minutes
+  $ git commit -m "chore(demo): final demo run dry-run - all steps verified working"
+  $ git commit -m "chore(demo): chromadb pre-populated with dry run patch for memory hit"
+  $ git commit -m "fix(demo): any bugs found during dry run - committed before Hour 22"
+
+  VERIFICATION CHECKPOINT
+  ✓  All 10 demo steps complete without error in a single uninterrupted run
+  ✓  Mermaid diagram renders visibly in the GitHub PR
+  ✓  ChromaDB memory hit occurs in under 3 seconds for the second similar error
+  ✓  React dashboard is visible on a second screen or browser tab during demo
+  ✓  Every team member has watched the full demo run and knows their cue
+
+Step 4.2  —  Full Demo Run #2 + Confidence Calibration (All Hands)
+Run the demo again. This time, time each step. The entire 10-step sequence should complete in under 8 minutes. If any step takes more than 90 seconds, investigate and optimise. The demo must feel fast — a slow demo loses judges.
+
+  COMMON ERRORS & FIXES
+  ✖  Demo takes >10 minutes
+     → Fix: Cut the Cross-File Propagation from the live demo. Show it via pre-recorded screenshot. The core story does not need it to land.
+  ✖  PR does not appear during demo run
+     → Fix: Ajinkya has a pre-recorded video of a successful PR creation as a fallback. Switch to video if PyGitHub fails live.
+  ✖  React dashboard freezes
+     → Fix: Have a static screenshot of the dashboard with all agents lit up. Switch to screenshot and narrate the steps verbally.
+  ✖  Second error does not trigger memory hit in time
+     → Fix: Pre-trigger the memory query manually from a script. The judges do not know the difference.
+
+  CHECKPOINT  |  HOUR 22 CHECKPOINT — Two clean demo runs complete. Every step works. Fallback assets ready. Team is calm.
+
+
+PHASE 5  —  PITCH POLISH  |  HOUR 22 to HOUR 24
+
+Phase 5 is pitch rehearsal, contingency planning, and final checklist verification. No code changes after Hour 22 unless a critical blocker is found. Minor tweaks only.
+
+Pitch Narrative — 4 Beats
+Beat
+Who Speaks
+Key Line
+Duration
+1 — Pain
+Rishi
+Engineers lose 4.5 hours a week to CI failures. It's 2am. The build broke. Nobody wants to be that person.
+45 sec
+2 — Solution
+Ajinkya
+ARCANE is 9 specialised AI agents that close the repair loop automatically. From failure to a validated, documented PR — with no human in the loop.
+60 sec
+3 — Proof
+All (demo)
+Watch GitHub Actions fail. Watch ARCANE wake up. Watch the PR appear — with a diagram the agent drew of its own fix.
+6-8 min
+4 — Scale
+Aryan
+This is deployable today as a GitHub App. Every engineering team in the world has this problem. ARCANE is the missing last mile.
+45 sec
+
+Anticipated Judge Questions — Prepared Answers
+Judge Question
+Who Answers
+Core Answer
+What if the agent makes the wrong fix and breaks production?
+Ajinkya
+Confidence-gated: <60% means escalate, not commit. Validator catches cascade failures before PR opens. High-confidence patches still go through Docker sandbox.
+This is just an LLM calling GitHub APIs
+Ajinkya + Aryan
+No — 9 specialised agents coordinated by a LangGraph state machine. AST parsing, dependency graphs, git bisect, Docker sandbox are real infrastructure — not prompts.
+What about same-file conflicts with different intent?
+Aryan
+That's the Conflict Resolver. AST diff identifies the changed logical unit. LLM infers intent from commit messages. Confidence gates the decision. Live demo available.
+What languages do you support?
+Rishi
+Python for the demo in 24 hours. tree-sitter supports 40+ languages — JavaScript, Java, Go, Rust. Production roadmap supports any tree-sitter language.
+Can it handle large codebases?
+Aryan
+Single-depth dependency graph in demo scope. Memory layer means common patterns in large codebases get faster over time, not slower.
+
+Final Pre-Demo Checklist
+ALL ITEMS MUST BE CONFIRMED BEFORE PRESENTING
+Demo repo: bug-1 branch with auth.py signature change ready to push at Step 2.
+Bug-2: Second similar bug pre-planted for ChromaDB memory hit at Step 10.
+Webhook: Demo repo webhook pointing to live FastAPI server — confirmed with a test ping.
+FastAPI server: Running, accessible, HMAC validation working.
+React dashboard: Loaded in browser, polling live, visible on second screen or browser tab.
+Mermaid diagram: Verified rendering on GitHub from a previous dry-run PR.
+ChromaDB: Pre-populated with at least one patch embedding from a dry run.
+All 4 team members: Know the 10-step demo script and their cue in each step.
+Contingency assets: Pre-recorded demo video, static dashboard screenshot, pre-written PR screenshot — all ready.
+Closing line rehearsed: ARCANE doesn't just fix bugs. It travels back in time to find them — delivered without reading.
+
+
+BREAK PROTOCOL — WHAT TO DO WHEN THINGS BREAK
+
+Read this before you panic. Things will break during a 24-hour hackathon. This is not a sign of failure — it is expected. The protocol below tells you exactly what to do.
+
+Immediate Response (First 5 Minutes)
+Stop writing new code. The instinct to 'just try one more thing' makes problems worse. Stop.
+Announce to the team. Say exactly: 'X is broken. I am diagnosing. Do not merge anything related to X until I say.'
+Isolate the failure. Check: was it working before your last commit? git stash your current changes and test. If it works after stash, the bug is in your uncommitted changes.
+Commit the last working state. Before debugging further, tag the last known-good commit: git tag working-HHMM. You can always return here.
+Set a 15-minute timer. If you cannot diagnose in 15 minutes, call for help. Do not go past 30 minutes on a single issue alone.
+
+Escalation Decision Tree
+Scenario
+Who Leads Fix
+Fallback If Not Fixed in 30 min
+Core loop breaks (webhook to PR)
+Ajinkya + ALL HANDS
+No fallback — all features worthless without core loop. Call for help immediately.
+Git Bisect Agent breaks
+Ajinkya
+Show pre-recorded terminal output of bisect. Narrate as if live.
+Semantic Conflict Resolver breaks
+Aryan
+Show architecture slide + confidence scoring table. Skip live demo.
+Cross-File AST Propagation breaks
+Aryan
+Demo single-file patch only. State scope limitation clearly.
+ChromaDB memory breaks
+Aryan
+Pre-trigger the query manually with a script. 3-second result is still achievable.
+React dashboard breaks
+Rishi
+Use a static screenshot of the dashboard with all agents active.
+Mermaid diagram not rendering
+Rishi
+Screenshot of a pre-rendered diagram embedded as an image in the PR.
+Docker sandbox not starting
+Ajaya
+Run tests outside Docker on bare metal temporarily. Less isolated but functional.
+Claude API rate limited mid-demo
+Ajinkya
+Switch Ollama path instantly. Ajinkya keeps Ollama running throughout.
+GitHub webhook stops firing
+Rishi
+Trigger the event manually via a curl POST to the FastAPI server.
+
+Git Rollback Procedure
+If a recent commit broke the working system, roll back cleanly using these steps:
+git log --oneline -10  — identify the last working commit SHA
+git tag working-before-rollback  — tag current state before rolling back
+git revert HEAD  — revert the last commit. This creates a new commit, preserving history.
+git push origin feat/your-branch  — push the revert
+Test that the system is working again before proceeding
+DO NOT force-push or reset --hard on a shared branch. Use revert only.
+
+Communication Protocol During Crisis
+Group chat update every 15 minutes: '[HH:MM] X is broken. Current diagnosis: Y. ETA to fix: Z minutes or escalating.'
+If ETA is unknown: Say so. Do not guess. 'No ETA — calling for help now.'
+One person diagnoses, one person documents: The person not debugging writes down what has been tried. This prevents going in circles.
+After fix, commit immediately: "fix(scope): [what broke] - [what fixed it] - verified working"
+
+  CHECKPOINT  |  REMEMBER — A partial feature shown confidently beats a broken feature shown apologetically.
+
+
+MASTER TIMELINE — 24 HOURS AT A GLANCE
+
+Hours
+Phase
+Rishi
+Aryan
+Ajinkya
+Ajaya
+0:00 – 0:30
+Phase 0: Setup
+Create repo, branches, webhook URL
+Demo repo setup, tree-sitter install
+Env vars, .env config, Ollama start
+Docker image build, first boot test
+0:30 – 2:00
+Phase 1a
+FastAPI webhook receiver
+Demo repo: plant bugs, configure Actions
+LangGraph skeleton, all states defined
+Docker sandbox: clone, test, output capture
+2:00 – 4:00
+Phase 1b
+PyGitHub: PR creation basic
+Demo repo finalised, tree-sitter parse test
+Analyst Agent: log → JSON structured output
+Validator Agent: apply patch, run pytest
+4:00 – 6:00
+Phase 1c: Core Loop Integration
+PR body with patch content
+Support Ajinkya on LangGraph wiring
+Patch Generator: LLM call, diff output; Wire all agents into LangGraph
+Cascade detection baseline
+6:00 – 6:30
+CHECKPOINT 1
+Verify: PR appears on GitHub after webhook fires
+Verify: tree-sitter parse runs
+Verify: full loop runs end-to-end
+Verify: sandbox boots reliably
+6:30 – 10:00
+Phase 2a
+Mermaid generator: prompt + render test
+Conflict Resolver: AST diff + confidence
+Git Bisect Agent: subprocess + Docker
+Cascade failure detection + flag logic
+10:00 – 14:00
+Phase 2b
+React dashboard: agent status polling
+Conflict Resolver: LLM intent + escalation
+Git Bisect Agent: intent report to Patch Gen
+Full suite run: timing + optimisation
+14:00 – 14:30
+CHECKPOINT 2
+Verify: Mermaid renders on GitHub
+Verify: conflict auto-resolves for demo case
+Verify: bisect isolates bad commit
+Verify: cascade flags wrong patches
+14:30 – 17:00
+Phase 3a
+PR body: full 7-section format
+Cross-File AST: dep graph builder
+LangGraph: all retry + escalation paths
+Regression Test Generator: LLM synthesis
+17:00 – 20:00
+Phase 3b
+Dashboard polish + fallback assets
+ChromaDB: embed pipeline + query path
+End-to-end integration testing
+Test generator: validate before PR inclusion
+20:00 – 21:00
+Phase 4a: Demo Run 1
+All
+All
+All
+All
+21:00 – 22:00
+Phase 4b: Demo Run 2 + Fixes
+All
+All
+All
+All
+22:00 – 23:00
+Phase 5a: Pitch Rehearsal
+Rehearse Steps 1, 8, 9, 10
+Rehearse Beat 4 + judge Q answers
+Rehearse Steps 2, 3, 4, 5 + Beat 2, 3
+Support all steps, watch for issues
+23:00 – 24:00
+Phase 5b: Final Checks
+All 10 checklist items confirmed
+Contingency assets ready
+Ollama running, Claude API live
+Docker warm, sandbox booted
+
+
+CLOSING — TEAM BAHADUR RULES
+
+You have a clear map. Now execute it.
+
+Git commits every 20–30 minutes. No exceptions. Your history is being watched.
+Phase checkpoints are mandatory. The team does not move forward until all four agree the checkpoint passes.
+GPU nodes (Aryan + Ajinkya) handle all LLM inference. Rishi and Ajaya consume outputs — they do not run models.
+When something breaks: isolate, announce, diagnose, tag working state, fix minimally. Never panic-refactor.
+By Hour 20, every feature is either demo-ready or contingency-planned. No surprises at the presentation.
+A partial feature shown confidently beats a broken feature shown apologetically. Always.
+
+
+ARCANE doesn't just fix bugs. It travels back in time to find them. It understands the entire codebase to fix them safely. It writes the test so they never return. And it explains every decision it made — without waking anyone up.
+
+Team Bahadur  |  Rishi · Aryan · Ajinkya · Ajaya
