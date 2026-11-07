@@ -19,6 +19,9 @@ import functools
 from datetime import datetime
 from typing import TypedDict, Optional, Any
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 try:
     from agents.analyst_agent import analyze as run_analyst
 except ImportError as _e:
@@ -70,9 +73,6 @@ except ImportError as _e:
     create_pr = None
 
 from langgraph.graph import StateGraph, END
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
 NODE_TIMEOUT = 90  # seconds — any node exceeding this is auto-escalated

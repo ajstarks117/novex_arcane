@@ -5,16 +5,23 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
 # Load environment variables before other imports
-load_dotenv()
+load_dotenv(override=True)
 
 import uvicorn
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from api.webhook import router as webhook_router, event_queue
-from agents.workflow import graph
+from api.webhook import router as webhook_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Debug: check env vars on reload
+for k, v in os.environ.items():
+    if k.startswith("GITHUB_"):
+        logger.info(f"[Debug] Env: {k} = {'*' * len(v)}")
+
+from agents.orchestrator import graph
 
 # ── Shared pipeline state — LangGraph updates this at each node transition ──
 pipeline_status = {
@@ -33,7 +40,7 @@ pipeline_status = {
 
 # ── Async consumer: drains the webhook queue → runs LangGraph ────────────────
 
-async def process_events():
+async def process_events(event_queue: asyncio.Queue):
     """
     Long-running task that pulls events from the webhook queue
     and feeds each one into the compiled LangGraph workflow.
@@ -94,7 +101,10 @@ async def process_events():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Start the background consumer on startup, cancel on shutdown."""
-    task = asyncio.create_task(process_events())
+    # Create the queue inside the running event loop
+    app.state.event_queue = asyncio.Queue(maxsize=10)
+    
+    task = asyncio.create_task(process_events(app.state.event_queue))
     logger.info("[Lifespan] Background event processor launched")
     yield
     task.cancel()

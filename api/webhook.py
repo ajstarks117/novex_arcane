@@ -8,8 +8,9 @@ from fastapi import APIRouter, Request, HTTPException
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# Module-level asyncio queue (maxsize=10)
-event_queue = asyncio.Queue(maxsize=10)
+# Module-level asyncio queue replaced by app.state.event_queue
+# Removed here to avoid loop binding issues on reload
+
 
 @router.post("/webhook")
 async def receive_webhook(request: Request):
@@ -36,6 +37,7 @@ async def receive_webhook(request: Request):
     
     # Securely compare signatures
     if not hmac.compare_digest(expected_signature, signature_header):
+        logger.warning(f"Signature mismatch! GitHub sent: {signature_header}, Server expected: {expected_signature}. Did you type the Secret correctly in GitHub?")
         raise HTTPException(status_code=403, detail="Invalid signature")
         
     # 3. Parse payload and extract fields
@@ -44,29 +46,37 @@ async def receive_webhook(request: Request):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
         
-    # Safely extract requested fields
+    # Safely extract fields — handles both push events and check_run events
     repo = payload.get("repository", {})
     repo_full_name = repo.get("full_name")
-    
+
+    # Push event: head_commit.id | Check run event: check_run.head_sha
     head_commit = payload.get("head_commit", {})
-    commit_sha = head_commit.get("id")
-    
+    commit_sha = head_commit.get("id") or payload.get("check_run", {}).get("head_sha")
+
+    # Failure log: from check_run output (CI events) or commit message (push events)
     check_run = payload.get("check_run", {})
-    output = check_run.get("output", {})
-    failure_log = output.get("text")
-    
+    failure_log = (
+        check_run.get("output", {}).get("text")
+        or head_commit.get("message")
+        or "No failure log provided"
+    )
+
+    event_type = request.headers.get("X-Github-Event", "unknown")
+    logger.info(f"Received GitHub event: {event_type} for {repo_full_name}")
+
     # 4. Push event dict to asyncio queue
     event_dict = {
         "repo_full_name": repo_full_name,
         "commit_sha": commit_sha,
-        "failure_log": failure_log
+        "failure_log": failure_log,
     }
-    
+
     # 5. Log dropped events if the queue is full
     try:
-        event_queue.put_nowait(event_dict)
+        request.app.state.event_queue.put_nowait(event_dict)
         logger.info(f"Queued webhook event: {repo_full_name} ({commit_sha})")
     except asyncio.QueueFull:
-        logger.warning(f"Queue is full. Dropped webhook event for {repo_full_name} ({commit_sha})")
-        
+        logger.warning(f"Queue is full. Dropped event for {repo_full_name} ({commit_sha})")
+
     return {"status": "received"}

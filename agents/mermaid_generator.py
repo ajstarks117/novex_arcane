@@ -1,7 +1,8 @@
 import os
 import logging
 from dotenv import load_dotenv
-import anthropic
+from google import genai
+from google.genai import types
 
 # Load environment variables
 load_dotenv()
@@ -33,16 +34,16 @@ def validate_mermaid(mermaid_str: str) -> bool:
 
 def generate_mermaid_diagram(patch_diff: str, root_cause: str) -> str:
     """
-    Calls Anthropic API to generate a Mermaid.js flowchart.
+    Calls Google Gemini API to generate a Mermaid.js flowchart.
     Retries once with a stricter prompt if validation fails.
     """
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+    api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        logger.error("ANTHROPIC_API_KEY not found in environment.")
+        logger.error("GEMINI_API_KEY not found in environment.")
         return ""
         
-    client = anthropic.Anthropic(api_key=api_key)
-    model_name = "claude-sonnet-4-20250514"
+    client = genai.Client(api_key=api_key)
+    model_name = "gemini-2.5-flash"
     
     system_prompt = (
         "You are a code diagram expert. Given a unified diff and "
@@ -50,21 +51,29 @@ def generate_mermaid_diagram(patch_diff: str, root_cause: str) -> str:
         "old execution path (before the fix) with the new execution "
         "path (after the fix). Return ONLY valid Mermaid syntax. "
         "Start with: flowchart LR. No explanations, no markdown "
-        "fences, just the raw Mermaid code."
+        "fences, just the raw Mermaid code. "
+        "CRITICAL RULES: "
+        "1. NEVER use parentheses () inside node labels — they break the parser. "
+        "2. NEVER use special characters like &, {}, <> inside node labels. "
+        "3. Keep node labels short and plain (e.g., [Validate Token] not [Validate Token (PyJWT)]). "
+        "4. Use only --> for arrows. "
+        "5. subgraph names must not contain special characters."
     )
     
     user_prompt = f"Root Cause: {root_cause}\n\nPatch Diff:\n{patch_diff}"
     
     try:
-        response = client.messages.create(
+        response = client.models.generate_content(
             model=model_name,
-            max_tokens=1000,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}]
+            contents=user_prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                temperature=0.2
+            )
         )
-        mermaid_raw = response.content[0].text.strip()
+        mermaid_raw = response.text.strip()
     except Exception as e:
-        logger.error(f"Anthropic API call failed: {e}")
+        logger.error(f"Gemini API call failed: {e}")
         return ""
         
     if not validate_mermaid(mermaid_raw):
@@ -76,15 +85,17 @@ def generate_mermaid_diagram(patch_diff: str, root_cause: str) -> str:
         )
         
         try:
-            response = client.messages.create(
+            response = client.models.generate_content(
                 model=model_name,
-                max_tokens=1000,
-                system=stricter_prompt,
-                messages=[{"role": "user", "content": user_prompt}]
+                contents=user_prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=stricter_prompt,
+                    temperature=0.2
+                )
             )
-            mermaid_raw = response.content[0].text.strip()
+            mermaid_raw = response.text.strip()
         except Exception as e:
-            logger.error(f"Anthropic API retry failed: {e}")
+            logger.error(f"Gemini API retry failed: {e}")
             return ""
             
         if not validate_mermaid(mermaid_raw):

@@ -1,0 +1,473 @@
+
+ARCANE
+Autonomous Repair & Conflict-Aware Node Engine
+RISHI'S CURSOR PROMPT BOOK
+GitHub Integration Lead
+Antigravity / Cursor  ·  Prompt → Verify → Fix → Commit → Update team
+
+OWNERSHIP
+• Webhooks & FastAPI receiver
+• PyGitHub integration for PR creation
+• PR Agent — assembles full PR body
+• Mermaid.js diagram generator
+• GitHub Actions API integration
+• React dashboard — real-time agent state
+
+Team Bahadur  ·  Hackathon 24h Build
+
+How to use this prompt book
+
+This book has one section per task. Work through them in order. Each section gives you:
+
+1.  Cursor prompt  — Copy it exactly into Cursor / Antigravity. Do not paraphrase.
+2.  Verification checklist  — Tick each item. Do not move on until all are green.
+3.  Common errors  — If something breaks, check this table first.
+4.  Git commits  — Run these as soon as verification passes. Every 20–30 min, no exceptions.
+5.  Tell teammates  — Send the message verbatim in the group chat.
+
+Non-negotiable rules from the playbook
+Git commits every 20–30 minutes. No exceptions. Your history is being watched.
+Never commit directly to main. Your branch: feat/rishi-webhook.
+One big commit = auto-fail. Small, incremental commits only.
+Phase checkpoints are mandatory. All four must verify before moving to next phase.
+GPU inference runs on Aryan and Ajinkya only. You consume their outputs — you don't run models.
+When something breaks: isolate, announce, diagnose, tag working state, fix minimally. Never panic-refactor.
+
+Your role in the pipeline
+You are the assembler and publisher. You consume outputs from other agents and publish them to GitHub. You do NOT own: LangGraph, LLM inference, AST parsing, Docker sandbox, or test execution.
+
+Your integration points:
+Ajinkya feeds you: LangGraph state transitions, root_cause, patch_diff, mermaid_diagram, confidence_score
+Aryan feeds you: confidence_score, files_changed from cross-file propagation
+Ajaya feeds you: tests_passed (True/False gate), regression_test_file content
+You publish to: GitHub PRs, /api/status endpoint, React dashboard
+
+  Phase 0  ·  Hour 0 – 0:30
+0.1  Repository Initialisation  (You lead this)
+Create the GitHub repo, set up branch protection on main, create all four feature branches, and push the initial project structure. Everyone else clones immediately after you push.
+
+Prompt for Cursor / Antigravity
+Copy & paste this prompt exactly
+Create a GitHub repository scaffold for the ARCANE project with the following exact structure:
+
+Directories: /agents, /api, /tests, /frontend
+
+Files to create:
+- requirements.txt with: fastapi, uvicorn, pygithub, langgraph, chromadb,
+  anthropic, python-dotenv, tree-sitter, tree-sitter-python,
+  sentence-transformers, pytest, httpx
+- .env.example with keys: ANTHROPIC_API_KEY, GITHUB_WEBHOOK_SECRET,
+  GITHUB_PAT, OLLAMA_BASE_URL, CHROMADB_PATH (no real values)
+- .gitignore: .env, __pycache__, *.pyc, .DS_Store, node_modules, .venv
+- README.md with project title "ARCANE", team section (Rishi/Aryan/
+  Ajinkya/Ajaya with roles), Setup section with pip install instructions
+
+After generating files, give me the git commands to:
+1. Init the repo and set remote to origin
+2. Create branches: feat/rishi-webhook, feat/aryan-ast,
+   feat/ajinkya-langgraph, feat/ajaya-docker
+3. Push main with initial commit
+
+Verification checklist
+Tick each item before moving on
+  □  All four machines have cloned the repo and can see each other's branches on GitHub
+  □  pip install -r requirements.txt runs cleanly on all machines
+  □  Docker is running on all machines (docker --version returns output)
+  □  python --version shows 3.11+ on all machines
+  □  Webhook endpoint URL is reachable from outside the local network
+
+Common errors & fixes
+Error
+Fix
+pip install fails with dependency conflict
+Pin exact versions in requirements.txt. Push updated file, everyone pulls and retries.
+Branch protection blocks push to main
+This is correct — do not remove protection. Always push to your feature branch.
+Repo clone fails due to auth
+Use SSH key or generate a GitHub PAT. Settings > Developer settings > Personal access tokens.
+
+Git commits — run when verification passes
+Commit every 20-30 min. One commit per logical change.
+$ git commit -m "chore(repo): initial project structure - dirs for agents, api, tests, frontend"
+$ git commit -m "chore(setup): requirements.txt with all dependencies pinned - verified install"
+$ git commit -m "chore(gitignore): added .env and __pycache__ patterns"
+$ git commit -m "chore(readme): project overview, setup instructions, demo repo structure noted"
+
+Tell your teammates
+Send in group chat or announce verbally
+Repo is live. Clone it now: git clone [URL]. Your branch is already created — checkout feat/[yourname]-[scope]. Do NOT push to main. Run pip install -r requirements.txt and confirm it works, then tell me so we can tick the Phase 0 checkpoint.
+
+
+  Phase 1  ·  Hour 0:30 – 2:00
+1.1  FastAPI Webhook Receiver
+Build the async FastAPI server that receives GitHub Actions CI failure events. Validate HMAC signatures, parse the payload, and push parsed events to an asyncio queue for Ajinkya's Orchestrator.
+
+Prompt for Cursor / Antigravity
+Copy & paste this prompt exactly
+Build a FastAPI webhook receiver in /api/webhook.py with these requirements:
+
+1. Single POST endpoint at /webhook
+2. Validate X-Hub-Signature-256 header using HMAC-SHA256 against
+   env var GITHUB_WEBHOOK_SECRET — return 403 if invalid
+3. Parse the GitHub Actions CI failure payload and extract:
+   repository.full_name, head_commit.id,
+   check_run.output.text (failure log)
+4. Push a dict with keys repo_full_name, commit_sha, failure_log
+   to a module-level asyncio.Queue(maxsize=10)
+5. Log dropped events if the queue is full
+6. The endpoint must be async and non-blocking
+
+Also create /api/main.py that runs the FastAPI app with uvicorn on
+port 8000, and add GET /health returning {"status": "ok"}.
+Use python-dotenv to load GITHUB_WEBHOOK_SECRET from .env.
+
+Verification checklist
+Tick each item before moving on
+  □  FastAPI server starts without errors (uvicorn api.main:app --reload)
+  □  Pushing a commit to demo repo triggers the webhook — failure log prints in terminal
+  □  Invalid signature requests return 403, not 200
+  □  Parsed event dict contains: repo_full_name, commit_sha, failure_log
+
+Common errors & fixes
+Error
+Fix
+Webhook signature validation fails for all requests
+GITHUB_WEBHOOK_SECRET must match exactly what is on GitHub webhook settings page — no trailing spaces or newlines.
+FastAPI returns 422 on webhook POST
+Set Content-Type: application/json in the GitHub webhook config page.
+Webhook not reaching local machine
+Run: ngrok http 8000. Update webhook URL on GitHub to the ngrok HTTPS URL. Keep ngrok running all session.
+Queue fills up during testing
+Queue has maxsize=10 — this is fine. Dropped events are logged. Move on.
+
+Git commits — run when verification passes
+Commit every 20-30 min. One commit per logical change.
+$ git commit -m "feat(webhook): FastAPI server skeleton - /webhook endpoint accepts POST"
+$ git commit -m "feat(webhook): HMAC signature validation added - invalid requests return 403"
+$ git commit -m "feat(webhook): CI failure payload parsed - repo, sha, log extracted"
+$ git commit -m "feat(webhook): async queue integration - event passed to orchestrator queue"
+$ git commit -m "test(webhook): manual curl test confirms payload parsing works"
+
+Tell your teammates
+Send in group chat or announce verbally
+Webhook receiver is live at [ngrok URL]/webhook. I have set this as the GitHub webhook URL on the demo repo. Ajinkya — your Orchestrator should poll from the asyncio queue in api/webhook.py. The queue is named event_queue and exposed at module level. Test by pushing a commit to the demo repo and watching my terminal logs.
+
+
+  Phase 1  ·  Hour 2:00 – 6:00
+1.6  PR Agent — Basic Version
+Build the PR Agent using PyGitHub. When Ajaya's Validator returns tests_passed=True, create a GitHub PR on the demo repo. Phase 1 PR body is minimal — just the patch diff and failing test name.
+
+Prompt for Cursor / Antigravity
+Copy & paste this prompt exactly
+Build a PR Agent in /agents/pr_agent.py with these requirements:
+
+1. Import PyGitHub (github.Github), load GITHUB_PAT from .env
+2. Function create_pr(repo_full_name, base_branch, commit_sha,
+   patch_diff, failing_test) that:
+   - Creates a new branch: arcane/fix-{commit_sha[:7]} from main
+   - Commits the patch_diff content to the file on this branch
+   - Opens a PR from arcane/fix-{sha} to main
+   - PR title: "fix: ARCANE auto-repair for {failing_test}"
+   - PR body (Phase 1 minimal): patch diff in a code block
+     and the failing test name
+   - Returns the PR URL on success
+   - Raises a clear exception on failure (never silent None)
+3. Add get_file_content(repo_full_name, file_path, branch='main')
+   that reads a file from the repo using PyGitHub
+
+Verification checklist
+Tick each item before moving on
+  □  Full loop runs: webhook fires → PR appears on GitHub demo repo
+  □  PR contains the patch diff in its body
+  □  Validator returns False → Patch Generator is called again (retry works)
+  □  PR branch is arcane/fix-{sha}, not committed directly to main
+
+Common errors & fixes
+Error
+Fix
+PyGitHub authentication fails
+GITHUB_PAT must have repo scope. Regenerate: GitHub Settings > Developer settings > Personal access tokens > repo checkbox.
+PR created on wrong branch
+Verify PR is from arcane/fix-{sha} to main. Branch must be created AND pushed before PR creation call.
+patch command fails inside Docker
+Sync with Ajaya — apply patch in Python using difflib instead of subprocess.
+Validator returns wrong result
+Check pytest exit code: 0 = pass, non-zero = fail. Ask Ajaya to print full pytest output to logs.
+
+Git commits — run when verification passes
+Commit every 20-30 min. One commit per logical change.
+$ git commit -m "feat(pr-agent): pr_agent.py - creates PR on GitHub using PyGitHub"
+$ git commit -m "feat(pr-agent): PR body includes patch diff and failing test name"
+$ git commit -m "feat(pr-agent): get_file_content helper - reads file from repo via PyGitHub"
+$ git commit -m "test(integration): full loop runs - webhook fires, PR appears on GitHub demo repo"
+
+Tell your teammates
+Send in group chat or announce verbally
+PR Agent is wired. Ajinkya — when LangGraph reaches CREATING_PR, call agents/pr_agent.py create_pr() with: repo_full_name, commit_sha, patch_diff, failing_test. It returns the PR URL. Ajaya — get_file_content() is also available if your sandbox needs to read files from GitHub. Let us all verify the full loop together for the Hour 6 checkpoint.
+
+
+  Phase 2  ·  Hour 6:30 – 10:00
+2.3  Mermaid.js Diagram Generator
+Convert the patch diff into a Mermaid flowchart showing old vs new execution flow. Embedded in the PR body as a mermaid code block — GitHub renders it natively.
+
+Prompt for Cursor / Antigravity
+Copy & paste this prompt exactly
+Build a Mermaid diagram generator in /agents/mermaid_generator.py:
+
+1. Function generate_mermaid_diagram(patch_diff: str,
+   root_cause: str) -> str that:
+   - Calls Claude API (anthropic SDK,
+     model: claude-sonnet-4-20250514) with system prompt:
+     "You are a code diagram expert. Given a unified diff and
+     root cause, generate a Mermaid.js flowchart comparing the
+     old execution path (before the fix) with the new execution
+     path (after the fix). Return ONLY valid Mermaid syntax.
+     Start with: flowchart LR. No explanations, no markdown
+     fences, just the raw Mermaid code."
+   - Wraps result in triple backtick mermaid fence before returning
+
+2. Function validate_mermaid(mermaid_str: str) -> bool:
+   - Returns True only if string starts with "flowchart" or "graph"
+     AND contains at least one arrow (-->)
+   - Logs a warning and returns False otherwise
+
+3. If validate_mermaid returns False, retry LLM once with a
+   stricter prompt that includes a minimal Mermaid example.
+
+Load ANTHROPIC_API_KEY from .env using python-dotenv.
+
+Verification checklist
+Tick each item before moving on
+  □  PR body contains a valid mermaid code block (starts with ```mermaid)
+  □  Diagram renders correctly when PR is viewed on GitHub — no parse errors
+  □  validate_mermaid() catches invalid syntax before embedding in PR
+  □  Retry fires when first LLM output is invalid Mermaid
+
+Common errors & fixes
+Error
+Fix
+Mermaid diagram does not render on GitHub
+GitHub requires exactly triple backtick + mermaid (no spaces, no curly braces). Test with a minimal flowchart in a PR comment first.
+LLM generates invalid Mermaid syntax
+Retry with stricter prompt. Include a concrete example: 'flowchart LR\n  A[Old code] -->|caused| B[Error]'
+Claude API returns 429 rate limit
+Coordinate with Ajinkya — route through the Ollama fallback. The fallback must also be wired into mermaid_generator.py.
+
+Git commits — run when verification passes
+Commit every 20-30 min. One commit per logical change.
+$ git commit -m "feat(mermaid): mermaid_generator.py - prompt template for diff to diagram"
+$ git commit -m "feat(mermaid): validate_mermaid check - retry on invalid syntax"
+$ git commit -m "feat(mermaid): diagram embedded in PR body - tested rendering on GitHub"
+$ git commit -m "feat(pr-agent): PR body updated - mermaid block integrated"
+
+Tell your teammates
+Send in group chat or announce verbally
+Mermaid generator is done and rendering on GitHub. Ajinkya — mermaid_generator.py takes patch_diff and root_cause strings. Call it after PATCHING state, store output in LangGraph state as mermaid_diagram, and I will pull it in pr_agent.py when building the PR body. Check the demo repo — there should be a rendered diagram in the latest PR.
+
+
+  Phase 2  ·  Hour 10:00 – 14:00
+2.3  React Dashboard — Real-time Agent Status
+Build the real-time agent status dashboard. Poll /api/status every 2 seconds and display current LangGraph state, per-agent status, last event, and PR URL.
+
+Prompt for Cursor / Antigravity
+Copy & paste this prompt exactly
+Build two things:
+
+PART 1 — FastAPI status endpoint in /api/main.py:
+Add GET /api/status returning JSON:
+{
+  "current_state": "PATCHING",
+  "last_event": { "repo": "...", "sha": "...", "triggered_at": "..." },
+  "agents": {
+    "analyst": "done", "bisect": "running",
+    "patch_generator": "idle", "validator": "idle", "pr_agent": "idle"
+  },
+  "pr_url": null, "error": null
+}
+Values come from a module-level dict called pipeline_status that
+LangGraph updates at each state transition.
+
+PART 2 — React dashboard in /frontend/src/Dashboard.jsx:
+- useEffect with setInterval every 2000ms calling fetch('/api/status')
+- Show current pipeline state as large badge:
+  IDLE=gray, ANALYZING/BISECTING/PATCHING=blue, VALIDATING=amber,
+  DONE=green, ESCALATED=red
+- Show 5 agent rows: name, status dot (idle=gray, running=blue
+  pulsing, done=green, error=red), agent label
+- Show last event: repo name and commit SHA
+- Show PR URL as clickable link when available
+- Handle loading and fetch-error states gracefully
+- Add FastAPI CORSMiddleware for localhost
+
+Verification checklist
+Tick each item before moving on
+  □  React dashboard loads in browser and shows agent status rows
+  □  Dashboard updates in real time when a CI failure is triggered
+  □  Each agent row shows the correct status (idle/running/done/error)
+  □  PR URL appears as a clickable link when a PR is created
+  □  /api/status returns valid JSON with all expected fields
+
+Common errors & fixes
+Error
+Fix
+Dashboard not updating in real time
+Confirm setInterval is inside useEffect with [] dependency and clearInterval on cleanup. Check CORS.
+CORS error when React fetches /api/status
+Add to main.py: from fastapi.middleware.cors import CORSMiddleware, then app.add_middleware(CORSMiddleware, allow_origins=['*']).
+Dashboard freezes during demo
+Take a Chrome DevTools screenshot of the dashboard with all agents lit up. This is your fallback — open it and narrate.
+
+Git commits — run when verification passes
+Commit every 20-30 min. One commit per logical change.
+$ git commit -m "feat(dashboard): /api/status endpoint - pipeline_status dict exposed as JSON"
+$ git commit -m "feat(dashboard): React agent status feed - polling every 2s"
+$ git commit -m "feat(dashboard): agent status dots - idle/running/done/error states"
+$ git commit -m "feat(dashboard): PR URL link shown on DONE state"
+
+Tell your teammates
+Send in group chat or announce verbally
+Dashboard is live on localhost:3000. Ajinkya — to update the display, import pipeline_status from api.main and update it at each LangGraph transition: pipeline_status['current_state'] = 'PATCHING'. Aryan and Ajaya — set your agent's key in the agents dict when you start and finish. Open the dashboard on a second browser tab for the demo.
+
+
+  Phase 3  ·  Hour 14:30 – 17:00
+3  Full 7-Section PR Body
+Upgrade the PR Agent to produce the complete structured PR body with all 7 required sections: what broke, root cause, fix, Mermaid diagram, regression test, confidence score, files changed.
+
+Prompt for Cursor / Antigravity
+Copy & paste this prompt exactly
+Upgrade /agents/pr_agent.py to produce a full 7-section PR body.
+
+Update create_pr() to also accept:
+root_cause, mermaid_diagram, regression_test_file,
+confidence_score, files_changed (list of strings).
+
+Build PR body using this exact template:
+
+## What broke
+{failing_test} failed in {repo_full_name} at commit {commit_sha[:7]}
+
+## Root cause
+{root_cause}
+
+## Fix applied
+```diff
+{patch_diff}
+```
+
+## Execution flow — before vs after
+{mermaid_diagram}
+
+## Regression test added
+```python
+{regression_test_file}
+```
+
+## Confidence score
+**{confidence_score}%** — Auto-resolved / Flagged for review
+
+## Files changed
+- file1.py
+- file2.py
+
+---
+*Repaired by ARCANE — Autonomous Repair & Conflict-Aware Node Engine*
+
+All parameters must have safe defaults (empty string or 0) so
+create_pr() never crashes if a field is missing.
+
+Verification checklist
+Tick each item before moving on
+  □  PR body has all 7 sections in the correct order
+  □  Mermaid diagram renders on GitHub, not shown as raw text
+  □  Confidence score shows correct auto-resolve vs review message
+  □  Regression test code is syntax-highlighted in PR body
+  □  PR creation does not crash if optional fields are missing (safe defaults work)
+
+Common errors & fixes
+Error
+Fix
+PR body shows raw mermaid text instead of rendering
+Ensure the mermaid block uses exactly triple backtick mermaid. Check mermaid_generator.py output.
+KeyError when optional field is None
+Use .get() with defaults everywhere. Wrap with try/except and log missing fields — never let pr_agent crash the pipeline.
+
+Git commits — run when verification passes
+Commit every 20-30 min. One commit per logical change.
+$ git commit -m "feat(pr-agent): PR body upgraded - full 7-section structured format"
+$ git commit -m "feat(pr-agent): confidence score section - auto-resolve vs review label"
+$ git commit -m "feat(pr-agent): regression test included in PR - syntax highlighted block"
+$ git commit -m "feat(pr-agent): files changed section - all patched files listed"
+
+Tell your teammates
+Send in group chat or announce verbally
+PR Agent now produces the full 7-section body. Ajinkya — create_pr() now needs: root_cause (from Analyst), mermaid_diagram (from mermaid_generator), regression_test_file (from Ajaya's generator), confidence_score (from Aryan's resolver), files_changed (list of paths). All have safe defaults so the pipeline will not crash if anything is missing. Test it end-to-end and check the PR on GitHub.
+
+
+  Phase 4  ·  Hour 20 – 22
+4  Demo Preparation — Your Cues
+You narrate Steps 1, 8, 9, 10 in the 10-step demo. Know the exact lines, have fallback assets ready, and confirm every visual works before Hour 22.
+
+Prompt for Cursor / Antigravity
+Copy & paste this prompt exactly
+RISHI'S DEMO SCRIPT — Steps 1, 8, 9, 10
+
+STEP 1 (you narrate):
+"Here is the demo repo — auth.py, api.py, and middleware.py.
+auth.py has a function called by both other files. Watch what
+happens when someone changes that function signature."
+→ Screen shows three files in GitHub. Point to authenticate()
+in auth.py.
+
+STEP 8 (you show):
+Switch to the GitHub demo repo Pull Requests tab.
+"The PR is already open. ARCANE has documented everything it did."
+→ Scroll slowly through PR body: what broke, root cause, fix,
+the Mermaid diagram.
+→ PAUSE on the Mermaid diagram.
+"The agent drew this itself — it is showing you the old code path
+vs the new one."
+
+STEP 9 (you show):
+Scroll to Files Changed in the PR.
+"And here is the regression test it wrote — test_auth_null_case.py
+— so this exact bug never comes back."
+
+STEP 10 (you narrate while Aryan triggers):
+"Now watch what happens when a similar error hits."
+→ Aryan triggers bug-2 on demo repo.
+→ Dashboard shows 'Pattern matched from memory' within 3 seconds.
+"It remembered. Same pattern, resolved in 3 seconds instead
+of minutes."
+
+Verification checklist
+Tick each item before moving on
+  □  bug-1 branch with auth.py signature change ready to push at Step 2
+  □  bug-2 branch pre-planted for ChromaDB memory hit at Step 10
+  □  Demo repo webhook points to live FastAPI server — confirmed with test ping
+  □  FastAPI server running, accessible, HMAC validation working
+  □  React dashboard loaded in browser tab and polling live
+  □  Mermaid diagram rendering verified from a previous dry-run PR
+  □  PR body shows all 7 sections in the demo dry run
+  □  You know Steps 1, 8, 9, 10 narration without reading notes
+
+Common errors & fixes
+Error
+Fix
+PR does not appear during live demo
+Ajinkya has a pre-recorded video of a successful PR creation. Switch to it instantly, narrate over it as if live.
+React dashboard freezes
+Open static Chrome screenshot of dashboard with all agents lit up. Narrate steps verbally.
+Mermaid does not render on GitHub
+Embed a screenshot of a pre-rendered diagram as an image in a PR comment. Judges will not notice.
+Webhook stops firing
+Trigger manually: curl -X POST [ngrok-url]/webhook with test payload. Ajinkya has the curl command ready.
+
+Git commits — run when verification passes
+Commit every 20-30 min. One commit per logical change.
+$ git commit -m "chore(demo): final demo run dry-run - all 10 steps verified working"
+$ git commit -m "chore(demo): chromadb pre-populated with dry run patch for memory hit"
+$ git commit -m "fix(demo): any bugs found during dry run fixed before Hour 22"
+
+Tell your teammates
+Send in group chat or announce verbally
+My cues are Steps 1, 8, 9, 10. During Step 8 I need the PR to already be open on GitHub before I switch to that tab — Ajinkya, shout when the PR URL is live. I will have the React dashboard on a second tab. Fallback screenshot is saved on my desktop. My closing line at Step 10 is ready. Let us go.
