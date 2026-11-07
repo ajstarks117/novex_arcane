@@ -53,6 +53,17 @@ async def process_events(event_queue: asyncio.Queue):
             f"{event.get('repo_full_name')} ({event.get('commit_sha', '?')[:7]})"
         )
 
+        # ── Reset all agent statuses for this fresh run ──
+        pipeline_status["agents"] = {
+            "analyst":         "idle",
+            "bisect":          "idle",
+            "patch_generator": "idle",
+            "validator":       "idle",
+            "pr_agent":        "idle",
+        }
+        pipeline_status["pr_url"] = None
+        pipeline_status["error"] = None
+
         # Stamp last_event so the dashboard can show it
         pipeline_status["last_event"] = {
             "repo":         event.get("repo_full_name"),
@@ -60,6 +71,7 @@ async def process_events(event_queue: asyncio.Queue):
             "triggered_at": datetime.now(timezone.utc).isoformat(),
         }
         pipeline_status["current_state"] = "ANALYZING"
+        pipeline_status["agents"]["analyst"] = "running"
 
         try:
             # Build initial state from webhook payload
@@ -67,52 +79,60 @@ async def process_events(event_queue: asyncio.Queue):
                 "repo_full_name": event.get("repo_full_name", ""),
                 "commit_sha":     event.get("commit_sha", ""),
                 "failure_log":    event.get("failure_log", ""),
-                # Placeholder — AST / LLM layers will populate these in Phase 2
                 "patch_diff":     event.get("failure_log", "# placeholder patch"),
                 "failing_test":   "unknown_test",
                 "retry_count":    0,
             }
 
-            # Start the LangGraph workflow using streaming for live UI updates
+            # Stream through graph — each yielded step updates the dashboard live
             result = initial_state
-            
-            # Start Analyst as running first
-            pipeline_status["agents"]["analyst"] = "running"
-            
             async for s in graph.astream(initial_state):
                 for node_name, state in s.items():
                     result = state
-                    
-                    if node_name == "analyzing_node":
+                    logger.info(f"[Consumer] 🔄 Node completed: {node_name}")
+
+                    # ── Map LangGraph node names → dashboard agent statuses ──
+                    if node_name == "analyzing":
                         pipeline_status["agents"]["analyst"] = "done"
                         pipeline_status["current_state"] = "BISECTING"
                         pipeline_status["agents"]["bisect"] = "running"
-                        
-                    elif node_name == "bisecting_node":
+
+                    elif node_name == "bisecting":
                         pipeline_status["agents"]["bisect"] = "done"
                         pipeline_status["current_state"] = "PATCHING"
                         pipeline_status["agents"]["patch_generator"] = "running"
-                        
-                    elif node_name == "patching_node":
+
+                    elif node_name == "patching":
                         pipeline_status["agents"]["patch_generator"] = "done"
                         pipeline_status["current_state"] = "VALIDATING"
                         pipeline_status["agents"]["validator"] = "running"
-                        
-                    elif node_name == "validating_node":
+
+                    elif node_name in ("propagating", "conflict_checking"):
+                        # Internal nodes — keep validator as running
+                        pass
+
+                    elif node_name == "validating":
                         pipeline_status["agents"]["validator"] = "done"
-                        if result.get("retry_count", 0) < 3 and result.get("confidence_score", 1.0) < 0.85:
-                            pipeline_status["current_state"] = "PATCHING"
-                            pipeline_status["agents"]["patch_generator"] = "running"
-                        else:
-                            pipeline_status["current_state"] = "TEST GENERATION"
-                            pipeline_status["agents"]["pr_agent"] = "running"
-                            
-                    elif node_name == "pr_creation_node":
+                        pipeline_status["current_state"] = "GENERATING TEST"
+                        pipeline_status["agents"]["pr_agent"] = "running"
+
+                    elif node_name == "generating_test":
+                        pipeline_status["current_state"] = "CREATING PR"
+
+                    elif node_name == "creating_pr":
                         pipeline_status["agents"]["pr_agent"] = "done"
+
+                    elif node_name == "done":
+                        pipeline_status["current_state"] = "DONE"
+
+                    elif node_name == "escalated":
+                        pipeline_status["current_state"] = "ESCALATED"
+                        pipeline_status["error"] = result.get("error", "Escalated after max retries")
 
             if result.get("pr_url"):
                 pipeline_status["pr_url"] = result["pr_url"]
                 pipeline_status["current_state"] = "DONE"
+                pipeline_status["agents"]["pr_agent"] = "done"
                 logger.info(f"[Consumer] ✅ PR created: {result['pr_url']}")
             elif result.get("error"):
                 pipeline_status["current_state"] = "ESCALATED"
@@ -120,12 +140,20 @@ async def process_events(event_queue: asyncio.Queue):
                 logger.warning(f"[Consumer] ⚠️  Workflow ended with error: {result['error']}")
             else:
                 pipeline_status["current_state"] = "DONE"
-                logger.info(f"[Consumer] Workflow completed: {result}")
+                logger.info(f"[Consumer] Workflow completed.")
 
         except Exception as e:
-            logger.error(f"[Consumer] Unhandled error processing event: {e}")
-            pipeline_status["current_state"] = "ESCALATED"
-            pipeline_status["error"] = str(e)
+            err_str = str(e)
+            logger.error(f"[Consumer] Unhandled error processing event: {err_str}")
+            # If it's a 422 duplicate PR error, treat as partial success
+            if "422" in err_str and "pull request already exists" in err_str.lower():
+                pipeline_status["current_state"] = "DONE"
+                pipeline_status["agents"]["pr_agent"] = "done"
+                pipeline_status["error"] = None
+                logger.info("[Consumer] PR already existed — treating as success.")
+            else:
+                pipeline_status["current_state"] = "ESCALATED"
+                pipeline_status["error"] = err_str
         finally:
             event_queue.task_done()
 
