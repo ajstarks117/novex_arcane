@@ -1,5 +1,6 @@
 import os
 import logging
+import requests
 from google import genai
 from google.genai import types
 
@@ -7,23 +8,46 @@ from google.genai import types
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+
+def call_ollama(prompt: str, system: str = '') -> str:
+    """
+    Fallback to local Ollama instance running llama3.1.
+    Ollama must already be running: ollama run llama3.1
+    """
+    logger.info("Path used: Ollama Fallback (llama3.1)")
+    try:
+        base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        full_prompt = f"{system}\n\n{prompt}" if system else prompt
+        payload = {
+            "model": "llama3.1",
+            "prompt": full_prompt,
+            "stream": False
+        }
+        res = requests.post(f"{base_url}/api/generate", json=payload, timeout=120)
+        res.raise_for_status()
+        return res.json().get("response", "").strip()
+    except Exception as e:
+        logger.error(f"[LLM_Client] Ollama fallback also failed: {e}")
+        return f"Error: Both Gemini and Ollama are unavailable: {e}"
+
+
 def call_llm(prompt: str, system: str = '') -> str:
     """
-    Calls Google Gemini API. Swapped out Claude & Ollama logic for local deployment.
+    Primary LLM: Google Gemini 2.5 Flash.
+    On 429 rate limit → falls back to Ollama llama3.1 (running locally).
+    On any other error → returns error string.
     """
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+
     if not api_key:
-        logger.error("GEMINI_API_KEY not found in environment.")
-        return "Error: GEMINI_API_KEY is missing."
+        logger.warning("[LLM_Client] GEMINI_API_KEY not found — routing to Ollama fallback.")
+        return call_ollama(prompt, system)
 
     try:
         logger.info("Path used: Google Gemini (gemini-2.5-flash)")
         client = genai.Client(api_key=api_key)
-        
-        config = types.GenerateContentConfig(
-            temperature=0.2
-        )
-        # Adding system instruction if provided
+
+        config = types.GenerateContentConfig(temperature=0.2)
         if system:
             config.system_instruction = system
 
@@ -33,76 +57,12 @@ def call_llm(prompt: str, system: str = '') -> str:
             config=config
         )
         return response.text.strip()
-        
+
     except Exception as e:
         error_str = str(e).lower()
         if "429" in error_str or "quota" in error_str or "exhausted" in error_str:
-            logger.warning("[LLM_Client] Rate limit hit! Falling back to offline mock for demo...")
-            
-            # 1. Analyst Mock
-            if "CI/CD failure analyst" in system:
-                return '{"failing_test": "tests/test_api.py::test_user_auth", "failing_file": "api/auth.py", "failing_line": 42, "root_cause_summary": "Incorrect validation of JWT expiration timestamp leading to premature session termination.", "suspected_function": "validate_token"}'
-                
-            # 2. Patch Mock
-            elif "corrected file content" in system:
-                return """```python
-import jwt
-from datetime import datetime, timedelta
+            logger.warning("[LLM_Client] Gemini rate limit hit! Falling back to Ollama llama3.1...")
+            return call_ollama(prompt, system)
 
-SECRET_KEY = "your-super-secret-key-please-change-me"
-ALGORITHM = "HS256"
-TOKEN_EXPIRATION_MINUTES = 30
-
-def create_token(user_id: str) -> str:
-    expiration = datetime.utcnow() + timedelta(minutes=TOKEN_EXPIRATION_MINUTES)
-    payload = {
-        "sub": user_id,
-        "exp": expiration.timestamp(),
-        "iat": datetime.utcnow().timestamp(),
-    }
-    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
-
-def validate_token(token: str) -> dict | None:
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        if datetime.utcnow().timestamp() > payload.get("exp", 0):
-            return None
-        return payload
-    except jwt.PyJWTError:
-        return None
-```"""
-            # 3. Regression Test Mock
-            elif "pytest regression test" in system:
-                return '''```python
-import pytest
-from datetime import datetime
-from unittest.mock import patch
-from api.auth import validate_token, create_token
-
-def test_expired_token_rejected_regression():
-    """Regression test to ensure expired tokens are rejected safely."""
-    token = create_token("user123")
-    future_time = datetime.utcnow().timestamp() + 3600
-    
-    with patch('api.auth.datetime') as mock_datetime:
-        mock_datetime.utcnow.return_value.timestamp.return_value = future_time
-        result = validate_token(token)
-        
-    assert result is None, "Expired token should return None, not pass"
-```'''
-            # 4. Mermaid Mock
-            elif "Mermaid.js flowchart" in system:
-                return """```mermaid
-graph TD
-    A[CI Failure Detected] --> B[Analyst Extracted Root Cause]
-    B --> C{ChromaDB Cache Hit?}
-    C -- No --> D[Bisect Selected Bad Commit]
-    C -- Yes --> E[Fast Forward Patch]
-    D --> E[Gemini Generated Patch]
-    E --> F[Validator Sandbox Test]
-    F -- Pass --> G[Regression Test Generated]
-    G --> H[PR Created Conf: 95%]
-```"""
-
-        logger.error(f"Gemini API call failed: {e}")
+        logger.error(f"[LLM_Client] Gemini API call failed: {e}")
         return f"Error: Gemini API call failed: {e}"
