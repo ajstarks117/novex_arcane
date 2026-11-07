@@ -11,7 +11,7 @@ Returns a dict added directly to LangGraph state:
     {
         'conflicts_found': bool,
         'action':  'auto_resolved' | 'escalated' | 'needs_review' | 'no_conflict',
-        'score':   float,
+        'confidence_score': float,
         'details': list[dict]   # one entry per conflict block
     }
 """
@@ -48,7 +48,7 @@ class ConflictResolver:
             return {
                 'conflicts_found': False,
                 'action': 'no_conflict',
-                'score': 1.0,
+                'confidence_score': 1.0,
                 'details': []
             }
 
@@ -100,6 +100,6 @@ class ConflictResolver:
         return {
             'conflicts_found': True,
             'action':          overall_action,
-            'score':           lowest_score,
+            'confidence_score': lowest_score,
             'details':         details
         }
