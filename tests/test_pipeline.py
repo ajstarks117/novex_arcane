@@ -64,10 +64,9 @@ def _sandbox_baseline(*args, **kwargs):
 @patch("agents.orchestrator.create_pr", return_value="https://github.com/test/repo/pull/99")
 @patch("agents.chroma_memory.init_memory", return_value=MagicMock())
 @patch("agents.chroma_memory.store_patch")
-@patch("agents.analyst_agent.query_memory", return_value=None)
 @patch("agents.chroma_memory.query_memory", return_value=None)
 def test_pipeline_happy_path(
-    mock_chroma_query, mock_query, mock_store, mock_init_mem,
+    mock_chroma_query, mock_store, mock_init_mem,
     mock_create_pr, mock_sandbox_runner, mock_val_sandbox, mock_llm, mock_get_content, mock_analyst_llm, mock_bisect, mock_regtest_llm
 ):
     """Full pipeline: IDLE → ANALYZING → BISECTING → PATCHING → VALIDATING → PR → DONE."""
@@ -106,9 +105,8 @@ def test_pipeline_happy_path(
 @patch("agents.patch_generator.call_llm", return_value="Error: all models failed")
 @patch("agents.validator_agent.run_sandbox")
 @patch("agents.sandbox_runner.run_sandbox")
-@patch("agents.analyst_agent.query_memory", return_value=None)
 @patch("agents.chroma_memory.query_memory", return_value=None)
-def test_pipeline_escalation_path(mock_chroma_query, mock_query, mock_sandbox_runner, mock_val_sandbox, mock_llm, mock_get_content, mock_analyst_llm):
+def test_pipeline_escalation_path(mock_chroma_query, mock_sandbox_runner, mock_val_sandbox, mock_llm, mock_get_content, mock_analyst_llm):
     """Pipeline escalates after MAX_RETRIES failed patch attempts."""
     mock_val_sandbox.return_value = {
         "passed": False,
@@ -148,10 +146,9 @@ def test_pipeline_escalation_path(mock_chroma_query, mock_query, mock_sandbox_ru
 @patch("agents.orchestrator.create_pr", return_value="https://github.com/test/repo/pull/100-draft")
 @patch("agents.chroma_memory.init_memory", return_value=MagicMock())
 @patch("agents.chroma_memory.store_patch")
-@patch("agents.analyst_agent.query_memory", return_value=None)
 @patch("agents.chroma_memory.query_memory", return_value=None)
 def test_pipeline_hosted_happy_path(
-    mock_chroma_query, mock_query, mock_store, mock_init_mem,
+    mock_chroma_query, mock_store, mock_init_mem,
     mock_create_pr, mock_llm, mock_get_content, mock_analyst_llm, mock_bisect, mock_regtest_llm
 ):
     """Hosted flow: IDLE → ANALYZING → BISECTING (inspection) → PATCHING → VALIDATING (static) → DRAFT PR → DONE."""

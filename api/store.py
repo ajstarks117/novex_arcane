@@ -96,16 +96,25 @@ class Store:
             saved = data.get("settings", {})
             for k, v in saved.items():
                 self.settings[k] = v
-            # Runs interrupted by a restart can never finish — mark them.
-            for r in self.runs:
-                if r.get("status") == "working":
-                    r["status"] = "failed"
-                    r["error"] = "Interrupted by a server restart."
-                    r["finishedAt"] = now_iso()
-        except FileNotFoundError:
-            pass
         except Exception:
             pass
+
+        # If JSON was missing/empty (e.g. fresh ephemeral container), attempt restore from SQLite DB
+        if not self.runs:
+            try:
+                from api.db import db_load_all_runs
+                db_runs = db_load_all_runs()
+                if db_runs:
+                    self.runs = db_runs
+            except Exception:
+                pass
+
+        # Runs interrupted by a restart can never finish — mark them.
+        for r in self.runs:
+            if r.get("status") == "working":
+                r["status"] = "failed"
+                r["error"] = "Interrupted by a server restart."
+                r["finishedAt"] = now_iso()
 
     def save(self) -> None:
         with self._lock:
@@ -125,6 +134,14 @@ class Store:
                         default=str,
                     )
                 os.replace(tmp, STORE_FILE)
+            except Exception:
+                pass
+
+            # Also mirror latest runs to SQLite DB for durability
+            try:
+                from api.db import db_save_run
+                for r in self.runs[:50]:
+                    db_save_run(r)
             except Exception:
                 pass
 

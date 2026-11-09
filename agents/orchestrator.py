@@ -460,22 +460,27 @@ def done_node(state: ArcaneState) -> ArcaneState:
 
     # 🧠 Store successful patch to ChromaDB for future memory fast-path
     if not state.get("fast_forward_patch"):  # Don't re-store memory hits
-        try:
-            import os
-            from agents.chroma_memory import init_memory, store_patch
-            db_path = os.environ.get('CHROMADB_PATH', './chroma_data')
-            client = init_memory(db_path)
-            store_patch(
-                client,
-                state.get("root_cause_summary", ""),   # error_log (used for embedding)
-                state.get("root_cause_summary", ""),   # root_cause
-                state.get("patch_diff", ""),            # patch_diff
-                state.get("failing_test", ""),          # test_file
-                state.get("commit_sha", ""),            # commit_sha
-            )
-            logger.info("[DONE] 🧠 Patch stored to ChromaDB memory for future fast-path.")
-        except Exception as e:
-            logger.warning(f"[DONE] ChromaDB store failed (non-fatal): {e}")
+        from agents.execution_mode import is_patch_memory_enabled
+        if is_patch_memory_enabled():
+            try:
+                import os
+                from agents.chroma_memory import init_memory, store_patch
+                db_path = os.environ.get('CHROMADB_PATH', './chroma_data')
+                client = init_memory(db_path)
+                if client:
+                    store_patch(
+                        client,
+                        state.get("root_cause_summary", ""),   # error_log (used for embedding)
+                        state.get("root_cause_summary", ""),   # root_cause
+                        state.get("patch_diff", ""),            # patch_diff
+                        state.get("failing_test", ""),          # test_file
+                        state.get("commit_sha", ""),            # commit_sha
+                    )
+                    logger.info("[DONE] 🧠 Patch stored to ChromaDB memory for future fast-path.")
+            except Exception as e:
+                logger.warning(f"[DONE] ChromaDB store failed (non-fatal): {e}")
+        else:
+            logger.info("[DONE] Hosted mode active: Skipping patch storage to ChromaDB memory to conserve RAM.")
 
 
     return state
