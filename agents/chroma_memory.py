@@ -15,24 +15,41 @@ Usage:
 
 import os
 import datetime
-import chromadb
-from chromadb.utils import embedding_functions
+import logging
+from typing import Optional, Any
 
+logger = logging.getLogger(__name__)
 
 _COLLECTION_NAME = 'arcane_patches'
 _EMBED_MODEL     = 'all-MiniLM-L6-v2'
 
 
-def init_memory(persist_path: str) -> chromadb.ClientAPI:
+def init_memory(persist_path: str) -> Optional[Any]:
     """
     Creates or loads a persistent ChromaDB collection named 'arcane_patches'.
+    Heavyweight libraries (chromadb, sentence-transformers, torch) are loaded
+    LAZILY only when patch memory is explicitly enabled (local mode).
+
+    In hosted mode, returns None immediately to save ~420 MB of RAM.
 
     Args:
         persist_path: directory where ChromaDB stores its data (MUST be absolute)
 
     Returns:
-        chromadb.ClientAPI with collection pre-loaded
+        chromadb.ClientAPI with collection pre-loaded, or None if disabled.
     """
+    from agents.execution_mode import is_patch_memory_enabled
+    if not is_patch_memory_enabled():
+        logger.info("[chroma_memory] Hosted mode active: ChromaDB & PyTorch skipped to conserve memory.")
+        return None
+
+    try:
+        import chromadb
+        from chromadb.utils import embedding_functions
+    except ImportError as e:
+        logger.warning(f"[chroma_memory] ChromaDB or sentence-transformers not installed: {e}")
+        return None
+
     abs_path = os.path.abspath(persist_path)
     os.makedirs(abs_path, exist_ok=True)
 
@@ -52,23 +69,31 @@ def init_memory(persist_path: str) -> chromadb.ClientAPI:
     return client
 
 
-def _get_collection(client: chromadb.ClientAPI):
+def _get_collection(client: Any) -> Optional[Any]:
     """Retrieve or lazily attach the collection to the client."""
+    if client is None:
+        return None
+
     if hasattr(client, '_arcane_collection'):
         return client._arcane_collection
 
-    ef = embedding_functions.SentenceTransformerEmbeddingFunction(
-        model_name=_EMBED_MODEL
-    )
-    col = client.get_or_create_collection(
-        name=_COLLECTION_NAME,
-        embedding_function=ef
-    )
-    client._arcane_collection = col
-    return col
+    try:
+        from chromadb.utils import embedding_functions
+        ef = embedding_functions.SentenceTransformerEmbeddingFunction(
+            model_name=_EMBED_MODEL
+        )
+        col = client.get_or_create_collection(
+            name=_COLLECTION_NAME,
+            embedding_function=ef
+        )
+        client._arcane_collection = col
+        return col
+    except Exception as e:
+        logger.warning(f"[chroma_memory] Could not get collection: {e}")
+        return None
 
 
-def store_patch(client: chromadb.ClientAPI,
+def store_patch(client: Any,
                 error_log: str,
                 root_cause: str,
                 patch_diff: str,
@@ -80,7 +105,12 @@ def store_patch(client: chromadb.ClientAPI,
     The embedding input is: '{error_log} || {root_cause}'
     Metadata stored: patch_diff, test_file, commit_sha, date
     """
+    if client is None:
+        return
+
     col = _get_collection(client)
+    if col is None:
+        return
 
     document = f"{error_log} || {root_cause}"
     doc_id   = f"{commit_sha}_{hash(document) & 0xFFFFFFFF}"
@@ -99,9 +129,9 @@ def store_patch(client: chromadb.ClientAPI,
     )
 
 
-def query_memory(client: chromadb.ClientAPI,
+def query_memory(client: Any,
                  error_log: str,
-                 threshold: float = 0.85) -> dict | None:
+                 threshold: float = 0.85) -> Optional[dict]:
     """
     Query ChromaDB for a patch that matches the given error_log.
 
@@ -117,7 +147,12 @@ def query_memory(client: chromadb.ClientAPI,
     Returns:
         metadata dict (with patch_diff, test_file, commit_sha, date) or None
     """
+    if client is None:
+        return None
+
     col = _get_collection(client)
+    if col is None:
+        return None
 
     try:
         results = col.query(
@@ -145,4 +180,3 @@ def query_memory(client: chromadb.ClientAPI,
 
     print(f"[chroma_memory] ❌ No match. similarity {similarity:.4f} < threshold {threshold}")
     return None
-

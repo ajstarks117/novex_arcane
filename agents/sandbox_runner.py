@@ -9,6 +9,10 @@ def warm_sandbox(repo_url: str):
     """
     Starts a background container and pre-clones the repo to save time on the next run.
     """
+    from agents.execution_mode import is_hosted_mode
+    if is_hosted_mode():
+        return
+
     # Health check: remove if it exists (even if stopped)
     subprocess.run(["docker", "rm", "-f", "arcane-warm"], capture_output=True)
     
@@ -124,8 +128,10 @@ def run_sandbox(repo_url: str, commit_sha: str, patch_diff: Optional[str] = None
     finally:
         # 6. Always remove the container
         subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
-        # Re-warm for next call in a background thread
-        threading.Thread(target=warm_sandbox, args=(repo_url,)).start()
+        # Re-warm for next call in a background thread (local Docker mode only)
+        from agents.execution_mode import is_hosted_mode
+        if not is_hosted_mode():
+            threading.Thread(target=warm_sandbox, args=(repo_url,)).start()
 
 if __name__ == "__main__":
     pass

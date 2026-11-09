@@ -89,3 +89,49 @@ def is_hosted_mode() -> bool:
     """Convenience helper returning True if current execution mode is hosted."""
     return get_execution_mode() == "hosted"
 
+
+def is_patch_memory_enabled() -> bool:
+    """Returns True if ChromaDB and embedding models are allowed to load.
+
+    To stay strictly within Render's 512 MB RAM limit, patch memory (ChromaDB +
+    sentence-transformers + PyTorch, which consumes ~420 MB RSS on import) is
+    DISABLED in hosted mode.
+    Can also be explicitly disabled via ARCANE_DISABLE_CHROMA=1.
+    """
+    if is_hosted_mode():
+        return False
+    if os.getenv("ARCANE_DISABLE_CHROMA", "").strip().lower() in ("1", "true", "yes"):
+        return False
+    return True
+
+
+def get_memory_usage_mb() -> float:
+    """Returns current process Resident Set Size (RSS) memory in MB."""
+    try:
+        import psutil
+        return psutil.Process().memory_info().rss / (1024 * 1024)
+    except Exception:
+        try:
+            import resource
+            # ru_maxrss is in KB on Linux, bytes on macOS
+            return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
+        except Exception:
+            return 0.0
+
+
+def log_memory_usage(label: str = "Memory Check") -> float:
+    """Logs current process RSS memory (MB) at INFO level and returns the value."""
+    mb = get_memory_usage_mb()
+    logger.info(f"[Memory] {label}: {mb:.1f} MB RSS")
+    return mb
+
+
+def trigger_garbage_collection() -> float:
+    """Runs Python garbage collection to immediately free unreferenced buffers and objects."""
+    import gc
+    gc.collect()
+    mb = get_memory_usage_mb()
+    logger.info(f"[Memory] Post-GC: {mb:.1f} MB RSS")
+    return mb
+
+

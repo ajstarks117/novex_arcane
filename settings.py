@@ -4,6 +4,10 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
+# Provide sensible defaults for optional local services so hosted cloud mode starts cleanly
+os.environ.setdefault("OLLAMA_BASE_URL", "http://localhost:11434")
+os.environ.setdefault("CHROMADB_PATH", "./chroma_data")
+
 REQUIRED_KEYS = [
     "ANTHROPIC_API_KEY",
     "GOOGLE_API_KEY",

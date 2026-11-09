@@ -28,6 +28,7 @@ from api.recorder import apply_node, finish_run, run_log_handler, start_run
 from api.auth import auth_router, token_for_login, token_for_repo
 from api.routes import router as api_router, github_token
 from api.store import store
+from agents.execution_mode import get_execution_mode, log_memory_usage, trigger_garbage_collection
 
 # ── Async consumer: drains the webhook queue → runs LangGraph ────────────────
 
@@ -39,15 +40,18 @@ AGENT_FOR_NODE = {
 }
 
 
-async def process_events(event_queue: asyncio.Queue):
+async def process_events(app: FastAPI):
     """Pulls events off the queue and streams each through the LangGraph workflow,
-    recording every step into the run store so the dashboard is live."""
-    logger.info("[Consumer] Event processor started — waiting for events")
+    recording every step into the run store so the dashboard is live.
+    Strictly limits concurrency to 1 on free-tier instances."""
+    event_queue = app.state.event_queue
+    logger.info("[Consumer] Event processor started — waiting for events (Concurrency limit: 1)")
     logging.getLogger().addHandler(run_log_handler)
     while True:
         event = await event_queue.get()
+        app.state.is_repair_active = True
         run = store.get_run(event.get("run_id", "")) or store.create_run(event)
-        logger.info(f"[Consumer] Processing {event.get('repo_full_name')} ({str(event.get('commit_sha', '?'))[:7]})")
+        log_memory_usage(f"Start repair run {run['id']} ({event.get('repo_full_name')})")
 
         reset_agents()
         pipeline_status.update(
@@ -66,36 +70,37 @@ async def process_events(event_queue: asyncio.Queue):
         error = None
         token_ctx = None
         try:
-            initial_state = {
-                "event": event,
-                "repo_full_name": event.get("repo_full_name", ""),
-                "commit_sha": event.get("commit_sha", ""),
-                "failure_log": event.get("failure_log", ""),
-                "failing_test": "unknown_test",
-                "retry_count": 0,
-            }
-            tok = token_for_login(run.get("owner", "")) or token_for_repo(run["repo"])
-            token_ctx = github_token(tok)
-            token_ctx.__enter__()
-            async for step in graph.astream(initial_state):
-                for node_name, state in step.items():
-                    final = state
-                    logger.info(f"[Consumer] 🔄 Node completed: {node_name}")
-                    apply_node(run, node_name, state)
-                    if node_name in AGENT_FOR_NODE:
-                        done, nxt, label = AGENT_FOR_NODE[node_name]
-                        pipeline_status["agents"][done] = "done"
-                        pipeline_status["agents"][nxt] = "running"
-                        pipeline_status["current_state"] = label
-                    elif node_name == "generating_test":
-                        pipeline_status["current_state"] = "CREATING PR"
-                    elif node_name == "creating_pr":
-                        pipeline_status["agents"]["pr_agent"] = "done"
-                    elif node_name == "done":
-                        pipeline_status["current_state"] = "DONE"
-                    elif node_name == "escalated":
-                        pipeline_status["current_state"] = "ESCALATED"
-                        pipeline_status["error"] = final.get("error")
+            async with app.state.repair_semaphore:
+                initial_state = {
+                    "event": event,
+                    "repo_full_name": event.get("repo_full_name", ""),
+                    "commit_sha": event.get("commit_sha", ""),
+                    "failure_log": event.get("failure_log", ""),
+                    "failing_test": "unknown_test",
+                    "retry_count": 0,
+                }
+                tok = token_for_login(run.get("owner", "")) or token_for_repo(run["repo"])
+                token_ctx = github_token(tok)
+                token_ctx.__enter__()
+                async for step in graph.astream(initial_state):
+                    for node_name, state in step.items():
+                        final = state
+                        log_memory_usage(f"Node '{node_name}' finished")
+                        apply_node(run, node_name, state)
+                        if node_name in AGENT_FOR_NODE:
+                            done, nxt, label = AGENT_FOR_NODE[node_name]
+                            pipeline_status["agents"][done] = "done"
+                            pipeline_status["agents"][nxt] = "running"
+                            pipeline_status["current_state"] = label
+                        elif node_name == "generating_test":
+                            pipeline_status["current_state"] = "CREATING PR"
+                        elif node_name == "creating_pr":
+                            pipeline_status["agents"]["pr_agent"] = "done"
+                        elif node_name == "done":
+                            pipeline_status["current_state"] = "DONE"
+                        elif node_name == "escalated":
+                            pipeline_status["current_state"] = "ESCALATED"
+                            pipeline_status["error"] = final.get("error")
         except Exception as e:
             error = str(e)
             logger.error(f"[Consumer] Unhandled error: {error}")
@@ -112,6 +117,9 @@ async def process_events(event_queue: asyncio.Queue):
             pipeline_status["pr_url"] = run.get("prUrl")
             pipeline_status["current_state"] = {"ready": "DONE", "working": "DONE"}.get(run["status"], "ESCALATED")
             pipeline_status["error"] = run.get("error")
+            app.state.is_repair_active = False
+            trigger_garbage_collection()
+            log_memory_usage(f"End repair run {run['id']}")
             event_queue.task_done()
 
 
@@ -120,11 +128,15 @@ async def process_events(event_queue: asyncio.Queue):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Start the background consumer on startup, cancel on shutdown."""
-    # Create the queue inside the running event loop
-    app.state.event_queue = asyncio.Queue(maxsize=10)
-    
-    task = asyncio.create_task(process_events(app.state.event_queue))
-    logger.info("[Lifespan] Background event processor launched")
+    # Create the queue and concurrency limiter inside the running event loop
+    app.state.event_queue = asyncio.Queue(maxsize=5)
+    app.state.repair_semaphore = asyncio.Semaphore(1)
+    app.state.is_repair_active = False
+
+    log_memory_usage(f"Startup | Mode: {get_execution_mode()} | Max concurrent: 1")
+
+    task = asyncio.create_task(process_events(app))
+    logger.info("[Lifespan] Background event processor launched (concurrency=1)")
     yield
     task.cancel()
     logger.info("[Lifespan] Background event processor cancelled")

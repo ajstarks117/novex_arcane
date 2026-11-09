@@ -139,6 +139,15 @@ def fetch_github_run(repo: str, run_id: str, token: Optional[str] = None) -> dic
 def enqueue_event(request_or_app: Any, event: dict) -> dict:
     """Create a run record and push the event to the pipeline queue."""
     app = getattr(request_or_app, "app", request_or_app)
+
+    # Free-tier memory protection: prevent overlapping repair runs
+    from agents.execution_mode import is_hosted_mode
+    if is_hosted_mode() and getattr(app.state, "is_repair_active", False) and getattr(app.state, "event_queue", None) and app.state.event_queue.qsize() >= 1:
+        raise HTTPException(
+            status_code=429,
+            detail="A repair is already in progress. Concurrent repairs are limited to 1 on this instance to conserve memory. Please wait for the current repair to complete.",
+        )
+
     run = store.create_run(event)
     event["run_id"] = run["id"]
     try:
@@ -379,10 +388,16 @@ _memory_client = None
 
 def _memory():
     global _memory_client
+    from agents.execution_mode import is_patch_memory_enabled
+    if not is_patch_memory_enabled():
+        return None
     if _memory_client is None:
-        from agents.chroma_memory import init_memory
-
-        _memory_client = init_memory(os.environ.get("CHROMADB_PATH", "./chroma_data"))
+        try:
+            from agents.chroma_memory import init_memory
+            _memory_client = init_memory(os.environ.get("CHROMADB_PATH", "./chroma_data"))
+        except Exception as e:
+            logger.warning(f"[API] ChromaDB memory init failed: {e}")
+            return None
     return _memory_client
 
 
@@ -393,11 +408,24 @@ def _lang(path: str) -> str:
 
 @router.get("/memory")
 def memory(q: str = "", limit: int = 50):
+    from agents.execution_mode import is_patch_memory_enabled
+    if not is_patch_memory_enabled():
+        return {
+            "items": [],
+            "total": 0,
+            "available": False,
+            "reason": "ChromaDB patch memory is disabled in hosted cloud mode to stay within Render's 512 MB memory limit.",
+        }
+
     try:
         client = _memory()
+        if client is None:
+            return {"items": [], "total": 0, "available": False, "reason": "Patch memory unavailable."}
         from agents.chroma_memory import _get_collection
 
         col = _get_collection(client)
+        if col is None:
+            return {"items": [], "total": 0, "available": False, "reason": "Collection unavailable."}
         items = []
         if q.strip():
             res = col.query(query_texts=[q], n_results=min(limit, max(1, col.count() or 1)), include=["metadatas", "distances", "documents"])

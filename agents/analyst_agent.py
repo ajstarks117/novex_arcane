@@ -3,7 +3,6 @@ import logging
 import os
 from typing import Dict, Any
 from agents.llm_client import call_llm
-from agents.chroma_memory import init_memory, query_memory
 
 logger = logging.getLogger(__name__)
 
@@ -18,62 +17,66 @@ def analyze(state: Dict[str, Any]) -> Dict[str, Any]:
         logger.warning("[Analyst] No failure log provided in state.")
         return state
 
-    # 🧠 CHROMADB MEMORY FAST PATH — check FIRST before any other logic
-    try:
-        db_path = os.environ.get('CHROMADB_PATH', './chroma_data')
-        client = init_memory(db_path)
-        # Lower threshold (0.65) because webhook sends commit message, not raw error log
-        memory_match = query_memory(client, failure_log, threshold=0.65)
+    # 🧠 CHROMADB MEMORY FAST PATH — check only when patch memory is enabled (local mode)
+    from agents.execution_mode import is_patch_memory_enabled
+    if is_patch_memory_enabled():
+        try:
+            from agents.chroma_memory import init_memory, query_memory
+            db_path = os.environ.get('CHROMADB_PATH', './chroma_data')
+            client = init_memory(db_path)
+            # Lower threshold (0.65) because webhook sends commit message, not raw error log
+            memory_match = query_memory(client, failure_log, threshold=0.65) if client else None
+            
+            if memory_match:
+                try:
+                    from api.store import store as _store
+                    if _store.memory_flags.get(memory_match.get("commit_sha"), True) is False:
+                        logger.info("[Analyst] Memory match ignored — reuse disabled by a reviewer")
+                        memory_match = None
+                except Exception:
+                    pass
+            if memory_match:
+                patch = memory_match.get("patch_diff", "")
+                failing_file = "unknown_file.py"
+                # Extract filename from patch header (e.g., --- a/api/auth.py)
+                for line in patch.splitlines():
+                    if line.startswith("--- a/"):
+                        failing_file = line[6:].strip()
+                        break
 
-        
-        if memory_match:
-            try:
-                from api.store import store as _store
-                if _store.memory_flags.get(memory_match.get("commit_sha"), True) is False:
-                    logger.info("[Analyst] Memory match ignored — reuse disabled by a reviewer")
-                    memory_match = None
-            except Exception:
-                pass
-        if memory_match:
-            patch = memory_match.get("patch_diff", "")
-            failing_file = "unknown_file.py"
-            # Extract filename from patch header (e.g., --- a/api/auth.py)
-            for line in patch.splitlines():
-                if line.startswith("--- a/"):
-                    failing_file = line[6:].strip()
-                    break
-
-            invalid_placeholders = {
-                "unknown_file", "unknown_file.py", "unknown", "", None,
-                "n/a", "na", "n/a.", "none", "not available", "not_available"
-            }
-            commit_sha = str(memory_match.get("commit_sha", ""))
-            if (
-                not patch
-                or not patch.strip()
-                or failing_file.strip().lower() in invalid_placeholders
-                or commit_sha.startswith("manual")
-            ):
-                logger.info(
-                    f"[Analyst] Memory match discarded because patch, failing_file '{failing_file}', or commit '{commit_sha}' is invalid."
-                )
-                memory_match = None
-            else:
-                logger.info(
-                    f"[Analyst] 🧠 CHROMA MEMORY HIT! Bypassing LLM analysis. Matched commit: {commit_sha}"
-                )
-                return {
-                    **state,
-                    "memory_hit": memory_match,  # Store for PR agent
-                    "failing_test": memory_match.get("test_file", "unknown_test"),
-                    "failing_file": failing_file,
-                    "failing_line": 0,
-                    "root_cause_summary": memory_match.get("root_cause", ""),
-                    "patch_diff": patch,
-                    "fast_forward_patch": True,
+                invalid_placeholders = {
+                    "unknown_file", "unknown_file.py", "unknown", "", None,
+                    "n/a", "na", "n/a.", "none", "not available", "not_available"
                 }
-    except Exception as e:
-        logger.error(f"[Analyst] ChromaDB memory check failed: {e}")
+                commit_sha = str(memory_match.get("commit_sha", ""))
+                if (
+                    not patch
+                    or not patch.strip()
+                    or failing_file.strip().lower() in invalid_placeholders
+                    or commit_sha.startswith("manual")
+                ):
+                    logger.info(
+                        f"[Analyst] Memory match discarded because patch, failing_file '{failing_file}', or commit '{commit_sha}' is invalid."
+                    )
+                    memory_match = None
+                else:
+                    logger.info(
+                        f"[Analyst] 🧠 CHROMA MEMORY HIT! Bypassing LLM analysis. Matched commit: {commit_sha}"
+                    )
+                    return {
+                        **state,
+                        "memory_hit": memory_match,  # Store for PR agent
+                        "failing_test": memory_match.get("test_file", "unknown_test"),
+                        "failing_file": failing_file,
+                        "failing_line": 0,
+                        "root_cause_summary": memory_match.get("root_cause", ""),
+                        "patch_diff": patch,
+                        "fast_forward_patch": True,
+                    }
+        except Exception as e:
+            logger.error(f"[Analyst] ChromaDB memory check failed: {e}")
+    else:
+        logger.info("[Analyst] Hosted mode active: Skipping ChromaDB memory check to conserve RAM.")
 
     system_prompt = (
         "You are an expert CI/CD failure analyst. Analyze the provided test failure log "
