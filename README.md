@@ -191,7 +191,15 @@ GEMINI_API_KEY=your_google_api_key
 GITHUB_PAT=your_github_personal_access_token
 GITHUB_WEBHOOK_SECRET=your_webhook_secret
 CHROMADB_PATH=./chroma_data
+ARCANE_EXECUTION_MODE=auto
 ```
+
+#### Dual-Mode Execution Configuration (`ARCANE_EXECUTION_MODE`):
+| Mode | Docker Requirement | Behavior |
+|------|---------------------|----------|
+| `auto` (Default) | Optional | Automatically probes Docker daemon availability. If Docker is running, runs in `local` mode. If Docker is unavailable (e.g. Render / Cloud), cleanly selects `hosted` mode without crashing. |
+| `hosted` | Never used | Cloud deployment mode. Bypasses Docker entirely. Uses GitHub API commit inspection, real AI patch generation, safe static Python AST/syntax validation, and generates **Draft Pull Requests** marked unverified with human review required. |
+| `local` | Required | Developer machine mode. Executes full Docker git-bisect and sandbox pytest test suite inside isolated containers. Raises a clear configuration error if the Docker daemon is not running. |
 
 ### 3. Pre-populate ChromaDB Memory
 
