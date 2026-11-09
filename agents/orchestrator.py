@@ -121,6 +121,15 @@ class ArcaneState(TypedDict, total=False):
     # ── VALIDATING outputs ──
     tests_passed: bool
     confidence_score: float
+    validation_status: str
+    test_verification: str
+    validator_exit_code: Optional[int]
+
+    # ── Dual-Mode & PR metadata ──
+    execution_mode: str
+    is_draft_pr: bool
+    bisect_mode: str
+    bisect_confidence: str
 
     # ── GENERATING_TEST outputs ──
     regression_test_code: str
@@ -175,15 +184,19 @@ def idle_node(state: ArcaneState) -> ArcaneState:
     """IDLE — receives the raw CI failure event and seeds the state."""
     logger.info("[IDLE] Received CI failure event")
     event = state.get("event", {})
+    from agents.execution_mode import get_execution_mode
+    mode = state.get("execution_mode") or event.get("execution_mode") or get_execution_mode()
+    logger.info(f"[IDLE] Execution mode set to: {mode.upper()}")
     seeded_state = {
         **state,
+        "execution_mode": mode,
         "repo_full_name": event.get("repo_full_name", state.get("repo_full_name", "")),
         "commit_sha": event.get("commit_sha", state.get("commit_sha", "")),
         "failure_log": event.get("failure_log", state.get("failure_log", "")),
         "pipeline_start_time": time.time(),
         "agents_used": "",
     }
-    # Capture baseline BEFORE any patch is applied
+    # Capture baseline BEFORE any patch is applied (skipped in hosted mode)
     if capture_baseline:
         seeded_state = capture_baseline(seeded_state)
     return seeded_state
@@ -321,19 +334,27 @@ def conflict_checking_node(state: ArcaneState) -> ArcaneState:
 
 @with_timeout("VALIDATING")
 def validating_node(state: ArcaneState) -> ArcaneState:
-    """VALIDATING — applies patch in Docker sandbox and runs full pytest suite."""
+    """VALIDATING — applies patch in Docker sandbox (local) or runs static syntax checks (hosted)."""
     retry = state.get("retry_count", 0)
-    logger.info(f"[VALIDATING] Running test suite (attempt {retry + 1})")
+    logger.info(f"[VALIDATING] Running validation (attempt {retry + 1})")
     try:
         if validate:
             updated = validate(state)
             result = {**state, **updated}
             result["agents_used"] = state.get("agents_used", "") + "validator,"
-            # Auto-approve if confidence >= 85%
-            score = result.get("confidence_score", 0)
-            if isinstance(score, (int, float)) and score >= 85:
-                result["auto_approved"] = True
-                logger.info(f"[VALIDATING] Confidence {score}% >= 85% — auto-approved")
+            
+            # Ensure skipped validation NEVER triggers auto-approval
+            if result.get("validation_status") == "SKIPPED":
+                result["auto_approved"] = False
+                logger.info("[VALIDATING] Hosted mode: Docker skipped — auto_approved=False")
+            else:
+                # Auto-approve only if tests actually passed in container and confidence >= 85%
+                score = result.get("confidence_score", 0)
+                if isinstance(score, (int, float)) and score >= 85 and result.get("tests_passed"):
+                    result["auto_approved"] = True
+                    logger.info(f"[VALIDATING] Confidence {score}% >= 85% and tests passed — auto-approved")
+                else:
+                    result["auto_approved"] = False
             return result
             
         logger.warning("WARNING: validator_agent not available — using mock")
@@ -343,7 +364,7 @@ def validating_node(state: ArcaneState) -> ArcaneState:
             **state,
             "tests_passed": passed,
             "confidence_score": mock_score,
-            "auto_approved": mock_score >= 0.85,
+            "auto_approved": mock_score >= 0.85 and passed,
         }
     except Exception as e:
         state['error'] = str(e)
@@ -372,28 +393,35 @@ def generating_test_node(state: ArcaneState) -> ArcaneState:
 
 @with_timeout("CREATING_PR")
 def creating_pr_node(state: ArcaneState) -> ArcaneState:
-    """CREATING_PR — opens a pull request on GitHub with the patch + test."""
+    """CREATING_PR — opens a pull request on GitHub with the patch + test (Draft PR if hosted)."""
     logger.info("[CREATING_PR] Opening pull request")
     try:
         import os as _os
+        is_draft = (state.get("execution_mode") == "hosted") or (state.get("validation_status") == "SKIPPED")
+        state["is_draft_pr"] = is_draft
+
         if _os.getenv("ARCANE_DRY_RUN", "").lower() in ("1", "true", "yes"):
-            logger.info("[CREATING_PR] ARCANE_DRY_RUN is set — skipping the real GitHub call")
+            prefix = "dry-run-draft" if is_draft else "dry-run"
+            logger.info(f"[CREATING_PR] ARCANE_DRY_RUN is set — skipping the real GitHub call ({prefix})")
             sha = state.get("commit_sha", "unknown")[:7]
             return {
                 **state,
-                "pr_url": f"https://github.com/{state.get('repo_full_name', 'org/repo')}/pull/dry-run-{sha}",
+                "is_draft_pr": is_draft,
+                "pr_url": f"https://github.com/{state.get('repo_full_name', 'org/repo')}/pull/{prefix}-{sha}",
             }
         if create_pr:
             pr_url = create_pr(state)
-            result = {**state, "pr_url": pr_url}
+            result = {**state, "pr_url": pr_url, "is_draft_pr": is_draft}
             result["agents_used"] = state.get("agents_used", "") + "pr_agent,"
             return result
             
         logger.warning("WARNING: pr_agent not available — using mock")
         sha = state.get("commit_sha", "unknown")[:7]
+        prefix = "mock-draft" if is_draft else "mock"
         return {
             **state,
-            "pr_url": f"https://github.com/{state.get('repo_full_name', 'org/repo')}/pull/mock-{sha}",
+            "is_draft_pr": is_draft,
+            "pr_url": f"https://github.com/{state.get('repo_full_name', 'org/repo')}/pull/{prefix}-{sha}",
         }
     except Exception as e:
         state['error'] = str(e)
@@ -408,11 +436,17 @@ def done_node(state: ArcaneState) -> ArcaneState:
     agents = state.get("agents_used", "").strip(",").replace(",", ", ")
     confidence = state.get("confidence_score", "N/A")
     auto = state.get("auto_approved", False)
+    mode = state.get("execution_mode", "unknown").upper()
+    val_status = state.get("validation_status", "N/A")
+    is_draft = state.get("is_draft_pr", False)
 
     logger.info(
         "\n" + "=" * 70 + "\n"
         "  [DONE] ARCANE Pipeline — SUCCESS SUMMARY\n"
         "=" * 70 + "\n"
+        f"  Execution Mode  : {mode}\n"
+        f"  Validation      : {val_status}\n"
+        f"  Draft PR        : {is_draft}\n"
         f"  PR URL          : {state.get('pr_url', 'N/A')}\n"
         f"  Total Time      : {elapsed:.1f}s\n"
         f"  Confidence      : {confidence}\n"
@@ -488,31 +522,50 @@ def after_patching(state: ArcaneState) -> str:
 
 
 def after_validating(state: ArcaneState) -> str:
-    """After VALIDATING: route based on test results + confidence + retry count."""
-    confidence = state.get("confidence_score", 0)
+    """After VALIDATING: route based on test results + confidence + retry count + execution mode."""
+    validation_status = state.get("validation_status")
     retries = state.get("retry_count", 0)
-    
-    # If tests passed with high confidence → generate regression test + PR
+    confidence = state.get("confidence_score", 0)
+
+    # Hosted mode / skipped validation:
+    # If static checks passed (SKIPPED), proceed to generate regression test and Draft PR.
+    # Do not treat skipped sandbox tests as failure requiring retries or escalation.
+    if validation_status == "SKIPPED":
+        logger.info(
+            "[VALIDATING] Validation SKIPPED in hosted mode (static checks passed) — "
+            "routing to GENERATING_TEST and Draft PR creation"
+        )
+        return "generating_test"
+
+    # If static check failed or validation hit ERROR in hosted mode:
+    if validation_status == "ERROR":
+        if retries >= MAX_RETRIES:
+            logger.warning("[VALIDATING] Validation error and retry cap reached — escalating")
+            return "escalated"
+        logger.info("[VALIDATING] Validation error (e.g. syntax check) — looping back to PATCHING")
+        return "patching"
+
+    # Local mode: If tests passed with high confidence in Docker sandbox → generate regression test + PR
     if state.get("tests_passed"):
         return "generating_test"
-    
+
     # If retries exhausted → escalate regardless
     if retries >= MAX_RETRIES:
         logger.warning("[VALIDATING] Retry cap reached — escalating")
         return "escalated"
-    
+
     # Cascade failure or low confidence but retries remain → loop back to try again
     if state.get("cascade_failure") and retries < MAX_RETRIES:
         logger.info(f"[VALIDATING] Cascade failure on attempt {retries} — looping back to PATCHING with cascade context")
         return "patching"
-    
+
     # Confidence gating: < 60% with no retries left means escalate
     if isinstance(confidence, (int, float)) and confidence < 60 and retries >= MAX_RETRIES:
         logger.warning(
             f"[VALIDATING] Confidence {confidence}% < 60% and retries exhausted — escalating"
         )
         return "escalated"
-    
+
     logger.info("[VALIDATING] Tests failed — looping back to PATCHING")
     return "patching"
 

@@ -3,6 +3,10 @@
 Mocks the Docker sandbox and LLM calls so the test runs without external deps,
 while verifying the state machine transitions through every node correctly.
 """
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import asyncio
 import pytest
 from unittest.mock import patch, MagicMock
@@ -57,12 +61,13 @@ def _sandbox_baseline(*args, **kwargs):
 @patch("agents.patch_generator.call_llm", return_value=MOCK_PATCH_CONTENT)
 @patch("agents.validator_agent.run_sandbox")
 @patch("agents.sandbox_runner.run_sandbox")
-@patch("agents.pr_agent.create_pr", return_value="https://github.com/test/repo/pull/99")
+@patch("agents.orchestrator.create_pr", return_value="https://github.com/test/repo/pull/99")
 @patch("agents.chroma_memory.init_memory", return_value=MagicMock())
 @patch("agents.chroma_memory.store_patch")
+@patch("agents.analyst_agent.query_memory", return_value=None)
 @patch("agents.chroma_memory.query_memory", return_value=None)
 def test_pipeline_happy_path(
-    mock_query, mock_store, mock_init_mem,
+    mock_chroma_query, mock_query, mock_store, mock_init_mem,
     mock_create_pr, mock_sandbox_runner, mock_val_sandbox, mock_llm, mock_get_content, mock_analyst_llm, mock_bisect, mock_regtest_llm
 ):
     """Full pipeline: IDLE → ANALYZING → BISECTING → PATCHING → VALIDATING → PR → DONE."""
@@ -73,6 +78,7 @@ def test_pipeline_happy_path(
     from agents.orchestrator import run_pipeline
 
     event = {
+        "execution_mode": "local",
         "repo_full_name": "test-org/test-repo",
         "commit_sha": "abc1234567890",
         "failure_log": (
@@ -100,8 +106,9 @@ def test_pipeline_happy_path(
 @patch("agents.patch_generator.call_llm", return_value="Error: all models failed")
 @patch("agents.validator_agent.run_sandbox")
 @patch("agents.sandbox_runner.run_sandbox")
+@patch("agents.analyst_agent.query_memory", return_value=None)
 @patch("agents.chroma_memory.query_memory", return_value=None)
-def test_pipeline_escalation_path(mock_query, mock_sandbox_runner, mock_val_sandbox, mock_llm, mock_get_content, mock_analyst_llm):
+def test_pipeline_escalation_path(mock_chroma_query, mock_query, mock_sandbox_runner, mock_val_sandbox, mock_llm, mock_get_content, mock_analyst_llm):
     """Pipeline escalates after MAX_RETRIES failed patch attempts."""
     mock_val_sandbox.return_value = {
         "passed": False,
@@ -117,6 +124,7 @@ def test_pipeline_escalation_path(mock_query, mock_sandbox_runner, mock_val_sand
     from agents.orchestrator import run_pipeline
 
     event = {
+        "execution_mode": "local",
         "repo_full_name": "test-org/test-repo",
         "commit_sha": "deadbeef1234",
         "failure_log": "FAILED tests/test_auth.py::test_valid_token",
@@ -130,6 +138,46 @@ def test_pipeline_escalation_path(mock_query, mock_sandbox_runner, mock_val_sand
     assert result.get("error") is not None
     assert "escalated" in result.get("error", "").lower() or "retry" in result.get("error", "").lower()
     assert result.get("retry_count", 0) >= 3
+
+
+@patch("agents.regression_test_generator.call_llm", return_value="def test_regression(): assert True")
+@patch("agents.git_bisect_agent.run_hosted_commit_inspection", return_value={"bisect_intent_report": "[HOSTED COMMIT INSPECTION — UNVERIFIED]"})
+@patch("agents.analyst_agent.call_llm", return_value='{"failing_test": "tests/test_auth.py::test_valid_token", "failing_file": "src/auth.py", "failing_line": 12, "root_cause_summary": "Token length threshold too high", "suspected_function": "validate_token"}')
+@patch("agents.pr_agent.get_file_content", return_value='def validate_token(token):\n    if len(token) < 80:\n        raise ValueError("Token must be at least 10 characters long")\n')
+@patch("agents.patch_generator.call_llm", return_value=MOCK_PATCH_CONTENT)
+@patch("agents.orchestrator.create_pr", return_value="https://github.com/test/repo/pull/100-draft")
+@patch("agents.chroma_memory.init_memory", return_value=MagicMock())
+@patch("agents.chroma_memory.store_patch")
+@patch("agents.analyst_agent.query_memory", return_value=None)
+@patch("agents.chroma_memory.query_memory", return_value=None)
+def test_pipeline_hosted_happy_path(
+    mock_chroma_query, mock_query, mock_store, mock_init_mem,
+    mock_create_pr, mock_llm, mock_get_content, mock_analyst_llm, mock_bisect, mock_regtest_llm
+):
+    """Hosted flow: IDLE → ANALYZING → BISECTING (inspection) → PATCHING → VALIDATING (static) → DRAFT PR → DONE."""
+    from agents.orchestrator import run_pipeline
+
+    event = {
+        "execution_mode": "hosted",
+        "repo_full_name": "test-org/test-repo",
+        "commit_sha": "abc1234567890",
+        "failure_log": (
+            "FAILED tests/test_auth.py::test_valid_token - ValueError: "
+            "Token must be at least 10 characters long\n"
+        ),
+        "branch": "main",
+        "source": "webhook",
+    }
+
+    result = asyncio.run(run_pipeline(event))
+
+    assert result.get("pr_url") == "https://github.com/test/repo/pull/100-draft"
+    assert result.get("execution_mode") == "hosted"
+    assert result.get("is_draft_pr") is True
+    assert result.get("validation_status") == "SKIPPED"
+    assert result.get("test_verification") == "NOT_VERIFIED"
+    assert result.get("tests_passed") is False
+    assert result.get("auto_approved") is False
 
 
 def test_pipeline_graph_structure():

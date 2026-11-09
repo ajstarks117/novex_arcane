@@ -1,3 +1,7 @@
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import unittest
 from unittest.mock import patch
 from agents.validator_agent import validate
@@ -6,6 +10,7 @@ class TestValidatorAgent(unittest.TestCase):
     
     def setUp(self):
         self.base_state = {
+            "execution_mode": "local",
             "repo_full_name": "teambahadur/arcane-demo",
             "commit_sha": "abcdef1234567890",
             "patch_diff": "fake_diff",

@@ -216,7 +216,7 @@ function Home({ go, openRun }: { go: (s: Screen) => void; openRun: () => void })
           <div className="section-head">
             <div>
               <h2>Fixes ready to review</h2>
-              <p>Each change was tested in an isolated sandbox.</p>
+              <p>Autonomous AI repair with sandbox testing & verified pull requests.</p>
             </div>
             <span className="count">{rows.length} {rows.length === 1 ? "fix" : "fixes"}</span>
           </div>
@@ -615,13 +615,13 @@ function RepairRun({ go, retry, assign }: { go: (s: Screen) => void; retry: () =
                   </>
                 ) : null}
                 {run.status === "working" && `Currently: ${run.stage.toLowerCase()}.`}
-                {run.status === "ready" && "ARCANE prepared a tested fix."}
+                {run.status === "ready" && (run.isDraftPr || run.validationStatus === "SKIPPED" ? "ARCANE prepared a draft repair proposal (sandbox skipped in cloud)." : "ARCANE prepared a tested fix.")}
                 {run.status === "person" && (run.reason || "ARCANE needs a person to decide.")}
                 {run.status === "failed" && (run.error || "The repair failed.")}
               </p>
             </div>
             <Badge tone={badgeTone(run.status)}>
-              {run.status === "ready" ? "Fix ready to review" : statusLabel[run.status]}
+              {run.status === "ready" ? (run.isDraftPr || run.validationStatus === "SKIPPED" ? "Draft PR ready for review" : "Fix ready to review") : statusLabel[run.status]}
             </Badge>
           </div>
           <div className="repair-body">
@@ -667,10 +667,17 @@ function RepairRun({ go, retry, assign }: { go: (s: Screen) => void; retry: () =
           <div className="decision-bar">
             <div>
               <strong>
-                {run.testsPassed == null ? "Tests not run yet" : run.testsPassed ? "Sandbox tests passed" : "Sandbox tests failed"}
+                {run.validationStatus === "SKIPPED" || run.isDraftPr
+                  ? "Draft PR ready · Sandbox skipped · Tests not verified"
+                  : run.testsPassed == null
+                  ? "Tests not run yet"
+                  : run.testsPassed
+                  ? "Sandbox tests passed"
+                  : "Sandbox tests failed"}
               </strong>
               <span>
                 {run.confidence != null ? `${run.confidence}% confidence` : "No confidence score yet"}
+                {run.isDraftPr && " · draft PR (review required)"}
                 {run.autoApproved && " · auto-approved"}
                 {run.decision === "accepted" && " · pull request opened"}
                 {run.decision === "rejected" && " · rejected"}
@@ -1028,7 +1035,12 @@ function PRPreview() {
             <code>arcane/fix-{run.sha.slice(0, 7)}</code>
             <span>into</span>
             <code>{run.branch}</code>
-            {run.testsPassed != null && <Badge tone={run.testsPassed ? "success" : "error"}>{run.testsPassed ? "Sandbox tests passed" : "Sandbox tests failed"}</Badge>}
+            {run.isDraftPr || run.validationStatus === "SKIPPED" ? (
+              <Badge tone="saffron">Draft PR · Sandbox Skipped · Unverified</Badge>
+            ) : (
+              run.testsPassed != null && <Badge tone={run.testsPassed ? "success" : "error"}>{run.testsPassed ? "Sandbox tests passed" : "Sandbox tests failed"}</Badge>
+            )}
+            {run.executionMode && <Badge tone="neutral">{run.executionMode.toUpperCase()} MODE</Badge>}
           </div>
           <div className="pr-section">
             <h2>What broke</h2>
@@ -1047,12 +1059,26 @@ function PRPreview() {
             </ul>
           </div>
           <div className="pr-section">
-            <h2>What was tested</h2>
+            <h2>{run.isDraftPr || run.validationStatus === "SKIPPED" ? "Verification & Checks" : "What was tested"}</h2>
             <div className="test-grid">
-              <span><Icon name="check" />{run.validatorSummary || "Sandbox validation"}</span>
-              <span><Icon name="check" />Docker sandbox, network off</span>
-              <span><Icon name="check" />{run.confidence != null ? `${run.confidence}% confidence` : "No confidence score"}</span>
-              <span><Icon name="check" />{run.conflict?.detected ? "Merge conflict resolved" : "No merge conflicts"}</span>
+              {run.isDraftPr || run.validationStatus === "SKIPPED" ? (
+                <>
+                  <span><Icon name="check" />Analysis completed</span>
+                  <span><Icon name="check" />Commit inspection completed</span>
+                  <span><Icon name="check" />Candidate patch generated</span>
+                  <span><Icon name="check" />Static checks completed (syntax & diff)</span>
+                  <span><Icon name="clock" />Docker sandbox skipped (cloud)</span>
+                  <span><Icon name="clock" />Tests not verified</span>
+                  <span><Icon name="check" />Draft PR ready for review</span>
+                </>
+              ) : (
+                <>
+                  <span><Icon name="check" />{run.validatorSummary || "Sandbox validation"}</span>
+                  <span><Icon name="check" />Docker sandbox, network off</span>
+                  <span><Icon name="check" />{run.confidence != null ? `${run.confidence}% confidence` : "No confidence score"}</span>
+                  <span><Icon name="check" />{run.conflict?.detected ? "Merge conflict resolved" : "No merge conflicts"}</span>
+                </>
+              )}
             </div>
           </div>
           <div className="pr-section">
@@ -1065,8 +1091,18 @@ function PRPreview() {
             <span className="fail">Build failed</span><i />
             <span>Commit found</span><i />
             <span>Fix written</span><i />
-            <span>Sandbox {run.testsPassed ? "passed" : "failed"}</span><i />
-            <span className="ready">Review</span>
+            {run.isDraftPr || run.validationStatus === "SKIPPED" ? (
+              <>
+                <span>Static checks passed</span><i />
+                <span className="warn">Sandbox skipped</span><i />
+                <span className="ready">Draft PR Review</span>
+              </>
+            ) : (
+              <>
+                <span>Sandbox {run.testsPassed ? "passed" : "failed"}</span><i />
+                <span className="ready">Review</span>
+              </>
+            )}
           </div>
           <span className="helper" hidden>{mermaid}</span>
           <Field label="Add a comment">

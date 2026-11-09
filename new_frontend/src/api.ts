@@ -58,6 +58,10 @@ export interface Run {
   conflict: { detected: boolean; action: string; score: number; details: unknown[] } | null;
   conflictResolution?: { text: string; by: string; at: string };
   validatorSummary: string;
+  executionMode?: "local" | "hosted" | "auto" | string;
+  validationStatus?: "PASSED" | "FAILED" | "SKIPPED" | "ERROR" | string;
+  testVerification?: "VERIFIED" | "NOT_VERIFIED" | string;
+  isDraftPr?: boolean;
   agentsUsed: string[];
   steps: Step[];
   decision: "none" | "accepted" | "rejected";

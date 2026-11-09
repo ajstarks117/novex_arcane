@@ -116,6 +116,15 @@ def apply_node(run: dict, node: str, state: dict) -> None:
     run["stage"] = NODE_STAGE.get(node, node.upper())
     run["attempts"] = max(run.get("attempts", 0), int(state.get("retry_count", 0) or 0) + (1 if node in ("patching", "validating") else 0))
 
+    if state.get("execution_mode"):
+        run["executionMode"] = state["execution_mode"]
+    if state.get("validation_status"):
+        run["validationStatus"] = state["validation_status"]
+    if state.get("test_verification"):
+        run["testVerification"] = state["test_verification"]
+    if state.get("is_draft_pr") is not None:
+        run["isDraftPr"] = bool(state["is_draft_pr"])
+
     if state.get("agents_used"):
         run["agentsUsed"] = [a for a in str(state["agents_used"]).split(",") if a]
 
@@ -169,15 +178,27 @@ def apply_node(run: dict, node: str, state: dict) -> None:
         run["confidence"] = norm_confidence(state.get("confidence_score"))
         run["autoApproved"] = bool(state.get("auto_approved"))
         run["validatorSummary"] = state.get("validator_summary", "") or ""
-        passed = bool(run["testsPassed"])
-        conf = f"{run['confidence']}% confidence" if run["confidence"] is not None else "confidence n/a"
-        store.set_step(
-            run,
-            "sandbox",
-            "done" if passed else "failed",
-            _short(run["validatorSummary"]) or ("Tests passed." if passed else "Tests failed."),
-            f"{'passed' if passed else 'failed'} · {conf} · network disabled",
-        )
+        run["validationStatus"] = state.get("validation_status", "PASSED" if run["testsPassed"] else "FAILED")
+        run["testVerification"] = state.get("test_verification", "VERIFIED")
+        
+        if run["validationStatus"] == "SKIPPED":
+            store.set_step(
+                run,
+                "sandbox",
+                "done",
+                _short(run["validatorSummary"]) or "Docker sandbox skipped in hosted cloud environment.",
+                "unverified · tests not run · static checks passed",
+            )
+        else:
+            passed = bool(run["testsPassed"])
+            conf = f"{run['confidence']}% confidence" if run["confidence"] is not None else "confidence n/a"
+            store.set_step(
+                run,
+                "sandbox",
+                "done" if passed else "failed",
+                _short(run["validatorSummary"]) or ("Tests passed." if passed else "Tests failed."),
+                f"{'passed' if passed else 'failed'} · {conf} · network disabled",
+            )
 
     elif node == "generating_test":
         run["regressionTest"] = state.get("regression_test_code", "") or ""
@@ -209,6 +230,14 @@ def finish_run(run: dict, final: dict, error: Optional[str] = None) -> None:
         run["confidence"] = norm_confidence(final.get("confidence_score"))
     if final.get("tests_passed") is not None:
         run["testsPassed"] = final.get("tests_passed")
+    if final.get("execution_mode"):
+        run["executionMode"] = final.get("execution_mode")
+    if final.get("validation_status"):
+        run["validationStatus"] = final.get("validation_status")
+    if final.get("test_verification"):
+        run["testVerification"] = final.get("test_verification")
+    if final.get("is_draft_pr") is not None:
+        run["isDraftPr"] = bool(final.get("is_draft_pr"))
     err = error or final.get("error")
 
     if error and not run["prUrl"]:
@@ -235,23 +264,27 @@ def finish_run(run: dict, final: dict, error: Optional[str] = None) -> None:
         if not run["patchDiff"].strip():
             run["status"] = "person"
             run["reason"] = "ARCANE did not produce a patch (the failing file was not available locally)"
+        elif run.get("validationStatus") == "SKIPPED" or run.get("isDraftPr"):
+            run["reason"] = "Draft PR open on GitHub for review — tests were not run in a sandbox (hosted cloud environment)"
         elif conf is not None and conf < esc_below:
             run["status"] = "person"
             run["reason"] = f"Confidence {conf}% is below the {esc_below}% safety rule"
         elif conf is not None and conf < min_conf:
             run["reason"] = f"Confidence {conf}% is under the {min_conf}% auto-approve rule — review before merging"
+        
+        is_draft = bool(run.get("isDraftPr") or run.get("validationStatus") == "SKIPPED")
         store.set_step(
             run,
             "ready",
             "done" if run["status"] == "ready" else "failed",
-            "The fix is safe to open as a pull request." if run["status"] == "ready" else run["reason"],
-            f"{conf}% confidence" if conf is not None else "",
+            "Draft PR ready for review (tests unverified)." if is_draft and run["status"] == "ready" else ("The fix is safe to open as a pull request." if run["status"] == "ready" else run["reason"]),
+            "draft PR · review required" if is_draft else (f"{conf}% confidence" if conf is not None else ""),
         )
-        store.log(run, "INFO", f"Run finished — status={run['status']}")
+        store.log(run, "INFO", f"Run finished — status={run['status']} (draft_pr={is_draft})")
 
     run["stage"] = "DONE" if run["status"] == "ready" else run["stage"]
     store.add_audit(
-        {"ready": "Prepared a tested fix", "person": "Sent fix to a person", "failed": "Repair failed"}.get(run["status"], "Finished run"),
+        "Prepared unverified draft PR" if run.get("isDraftPr") else ({"ready": "Prepared a tested fix", "person": "Sent fix to a person", "failed": "Repair failed"}.get(run["status"], "Finished run")),
         run["repo"],
         "ARCANE",
     )
@@ -271,4 +304,8 @@ def build_state_from_run(run: dict) -> dict:
         "regression_test_code": run["regressionTest"],
         "confidence_score": run["confidence"],
         "tests_passed": bool(run["testsPassed"]),
+        "execution_mode": run.get("executionMode", "auto"),
+        "validation_status": run.get("validationStatus"),
+        "test_verification": run.get("testVerification"),
+        "is_draft_pr": run.get("isDraftPr", False),
     }
