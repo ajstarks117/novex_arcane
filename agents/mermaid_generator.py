@@ -24,6 +24,21 @@ flowchart LR
 ```"""
 
 
+def validate_mermaid(text: str) -> bool:
+    """
+    Basic validation that a string looks like valid Mermaid syntax.
+    Checks that it starts with a known diagram keyword and contains
+    at least one arrow (-->).
+    """
+    stripped = text.strip()
+    valid_prefixes = ("flowchart", "graph", "sequenceDiagram", "stateDiagram", "classDiagram", "erDiagram")
+    if not any(stripped.startswith(p) for p in valid_prefixes):
+        return False
+    if "-->" not in stripped:
+        return False
+    return True
+
+
 def generate_mermaid_diagram(patch_diff: str, root_cause: str) -> str:
     """
     Returns a clean, pre-validated Mermaid.js flowchart for the PR body.

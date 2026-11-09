@@ -26,7 +26,7 @@ class TestValidatorAgent(unittest.TestCase):
         self.assertTrue(new_state["tests_passed"])
         self.assertEqual(new_state["retry_count"], 0) # No increment
         self.assertFalse(new_state.get("timeout", False))
-        self.assertEqual(new_state["validator_summary"], "All tests passed. No failures.")
+        self.assertIn("All tests passed", new_state["validator_summary"])
         
     @patch('agents.validator_agent.run_sandbox')
     def test_validator_fail(self, mock_run_sandbox):

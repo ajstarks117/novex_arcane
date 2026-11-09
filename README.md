@@ -281,7 +281,7 @@ python test_pipeline.py
 
 ---
 
-## 👥 Team Bahadur
+## 👥 Team Mosambi
 
 | Member | Role | Key Deliverables |
 |--------|------|-----------------|
@@ -296,6 +296,6 @@ python test_pipeline.py
 
 *ARCANE doesn't just fix bugs. It travels back in time to find them — understands the entire codebase to fix them safely — writes the test so they never return — and explains every decision it made, without waking anyone up.*
 
-**Built in 24 hours at Hackathon 2026**
+**Built at NOVEX Hackathon 2026**
 
 </div>

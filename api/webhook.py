@@ -4,6 +4,7 @@ import hashlib
 import asyncio
 import logging
 from fastapi import APIRouter, Request, HTTPException
+from api.store import store
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -97,13 +98,19 @@ async def receive_webhook(request: Request):
         "repo_full_name": repo_full_name,
         "commit_sha": commit_sha,
         "failure_log": failure_log,
+        "branch": branch,
+        "commit_message": head_commit.get("message", ""),
+        "author": (head_commit.get("author") or {}).get("name", ""),
+        "source": "webhook",
+        "owner": store.watched.get(repo_full_name, "") or (repo_full_name.split("/")[0] if "/" in repo_full_name else ""),
     }
 
     # 5. Log dropped events if the queue is full
     try:
-        request.app.state.event_queue.put_nowait(event_dict)
+        from api.routes import enqueue_event
+        enqueue_event(request, event_dict)
         logger.info(f"[Webhook] Queued event: {repo_full_name} ({commit_sha})")
-    except asyncio.QueueFull:
+    except (asyncio.QueueFull, HTTPException):
         logger.warning(f"[Webhook] Queue is full. Dropped event for {repo_full_name} ({commit_sha})")
 
     return {"status": "received"}

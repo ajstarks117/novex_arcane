@@ -25,14 +25,23 @@ def generate_patch(state: Dict[str, Any]) -> Dict[str, Any]:
             with open(failing_file, 'r', encoding='utf-8') as f:
                 original_content = f.read()
         else:
-            logger.warning(f"[PatchGenerator] File {failing_file} not found locally. Using mock content.")
-            original_content = "def authenticate(user, password):\n    return False\n"
+            # Not on local disk - read it from the repository on GitHub (read-only).
+            try:
+                from agents.pr_agent import get_file_content
+                ref = state.get("commit_sha") or (state.get("event") or {}).get("branch") or "main"
+                original_content = get_file_content(state.get("repo_full_name", ""), failing_file, ref)
+                logger.info(f"[PatchGenerator] Loaded {failing_file} from GitHub ({ref[:7] if len(ref) >= 7 else ref})")
+            except Exception as gh_err:
+                logger.error(f"[PatchGenerator] Could not load {failing_file} from GitHub ({gh_err}).")
+                return {**state, "patch_diff": "", "error": f"Could not read failing file '{failing_file}' from repo: {gh_err}", "retry_count": state.get("retry_count", 0) + 1}
     except Exception as e:
         logger.error(f"[PatchGenerator] Error reading file: {e}")
         return {**state, "patch_diff": "", "retry_count": state.get("retry_count", 0) + 1}
 
     system_prompt = (
         "You are an expert developer. Your task is to fix a failing test by providing the corrected file content. "
+        "Make the SMALLEST possible change — typically changing just one number or operator. "
+        "Do NOT rewrite the file, do NOT remove functions, do NOT change function signatures or imports. "
         "You must return ONLY the raw Python file content. Start with the first line of the file. End with the last line. "
         "No text before or after. Do not use markdown code fences."
     )
@@ -43,6 +52,24 @@ def generate_patch(state: Dict[str, Any]) -> Dict[str, Any]:
         f"Root Cause Summary: {state.get('root_cause_summary', 'Unknown')}\n"
         f"Suspected Function: {state.get('suspected_function', 'Unknown')}\n"
     )
+    
+    # Include the failing test file content so the LLM knows what must pass
+    failing_test = state.get("failing_test", "")
+    if failing_test:
+        test_file = failing_test.split("::")[0] if "::" in failing_test else ""
+        if test_file:
+            try:
+                from agents.pr_agent import get_file_content
+                ref = state.get("commit_sha") or "main"
+                test_content = get_file_content(state.get("repo_full_name", ""), test_file, ref)
+                prompt += f"\nTest file ({test_file}) that must pass:\n{test_content}\n"
+            except Exception:
+                pass
+    
+    # Include the failure log so LLM sees the actual error
+    failure_log = state.get("failure_log", "")
+    if failure_log and "FAILED" in failure_log:
+        prompt += f"\nActual test failure output:\n{failure_log[:2000]}\n"
     
     if state.get("bisect_intent_report"):
         prompt += f"\nGit Bisect Context:\n{state.get('bisect_intent_report')}\n"
@@ -61,7 +88,12 @@ def generate_patch(state: Dict[str, Any]) -> Dict[str, Any]:
     logger.info(f"[PatchGenerator] Asking LLM for corrected code for {failing_file}...")
     
     patched_content = call_llm(prompt=prompt, system=system_prompt)
-    
+
+    # call_llm reports failures as "Error: ..." text — never treat that as code.
+    if patched_content.lstrip().startswith("Error:"):
+        logger.error(f"[PatchGenerator] LLM call failed: {patched_content[:200]}")
+        return {**state, "patch_diff": "", "retry_count": state.get("retry_count", 0) + 1}
+
     # Clean markdown if LLM includes it
     patched_content = patched_content.strip()
     if patched_content.startswith("```python"):
@@ -97,5 +129,6 @@ def generate_patch(state: Dict[str, Any]) -> Dict[str, Any]:
     return {
         **state,
         "patch_diff": patch_diff,
+        "patched_content": patched_content,
         "retry_count": retry_count + 1
     }

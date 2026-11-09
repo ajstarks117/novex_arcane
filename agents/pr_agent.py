@@ -31,7 +31,8 @@ def create_pr(state: dict) -> str:
     repo = g.get_repo(repo_full_name)
     
     branch_name = f"arcane/fix-{commit_sha[:7]}"
-    base_branch = "main"
+    base_branch = (state.get("event") or {}).get("branch") or "main"
+    patched_content = state.get("patched_content", "")
     
     # 1. Create a new branch from main
     base_ref = repo.get_git_ref(f"heads/{base_branch}")
@@ -50,6 +51,19 @@ def create_pr(state: dict) -> str:
     except Exception:
         repo.create_file(file_path, commit_msg, patch_diff, branch=branch_name)
         
+    # 2b. Commit the actual fix to the failing file so the PR really changes the code
+    fix_committed = False
+    if patched_content and failing_file and failing_file not in ("N/A", "unknown_file", "unknown"):
+        try:
+            try:
+                existing = repo.get_contents(failing_file, ref=branch_name)
+                repo.update_file(existing.path, f"fix: ARCANE repair for {failing_test}", patched_content, existing.sha, branch=branch_name)
+            except Exception:
+                repo.create_file(failing_file, f"fix: ARCANE repair for {failing_test}", patched_content, branch=branch_name)
+            fix_committed = True
+        except Exception as e:
+            logger.warning(f"Could not commit the patched file {failing_file}: {e}")
+
     # Generate mermaid diagram
     logger.info("Generating Mermaid diagram...")
     mermaid_diagram = generate_mermaid_diagram(patch_diff, root_cause)
@@ -102,6 +116,7 @@ def create_pr(state: dict) -> str:
 ### 7. Files Changed
 - `{failing_file if failing_file and failing_file not in ('N/A','unknown_file','unknown') else 'api/auth.py'}`
 - `{file_path}` *(ARCANE patch diff)*
+{"" if fix_committed else "> Note: the patch was attached as a .diff file only; apply it manually."}
 """
 
     # 3. Opens a PR from arcane/fix-{sha} to main

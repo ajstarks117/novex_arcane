@@ -17,7 +17,11 @@ def validate(state: Dict[str, Any]) -> Dict[str, Any]:
     patch_diff = state.get("patch_diff")
     
     # Construct the full repo URL
-    repo_url = f"https://github.com/{repo_full_name}" if repo_full_name else ""
+    token = os.getenv("GITHUB_PAT")
+    if token and repo_full_name:
+        repo_url = f"https://x-access-token:{token}@github.com/{repo_full_name}.git"
+    else:
+        repo_url = f"https://github.com/{repo_full_name}" if repo_full_name else ""
     
     # Call the sandbox runner
     sandbox_result = run_sandbox(repo_url, commit_sha, patch_diff)
@@ -59,9 +63,17 @@ def validate(state: Dict[str, Any]) -> Dict[str, Any]:
         state["cascade_failure"] = True
         state["cascade_failure_report"] = list(cascade_failures)
         state["retry_count"] = current_retry + 1
+        # Give a low-but-nonzero confidence so orchestrator routes to retry, not instant-escalate
+        state["confidence_score"] = round(max(30.0, 60.0 - (current_retry * 15.0)), 1)
         
         failing_test = state.get("failing_test", "the target test")
         state["cascade_context"] = f"Previous patch fixed {failing_test} but broke: {list(cascade_failures)}. Do not break these tests."
+        # Feed the cascade report back so patch generator avoids same mistake
+        state["cascade_report"] = (
+            f"Your previous patch fixed {failing_test} but introduced {len(cascade_failures)} NEW test failures: "
+            f"{list(cascade_failures)}. You MUST keep all existing tests passing. "
+            f"Only change the minimum code needed to fix the bug."
+        )
         
         print(f"CASCADE DETECTED — {len(cascade_failures)} tests newly broken: {list(cascade_failures)}")
         state["validator_summary"] = f"Original test fixed. BUT {len(cascade_failures)} new test failures introduced: {list(cascade_failures)}. Looping back."
@@ -71,9 +83,11 @@ def validate(state: Dict[str, Any]) -> Dict[str, Any]:
         tests_passed = True
         state["timeout"] = False
         state["cascade_failure"] = False
-        state["retry_count"] = current_retry # Do not increment
-        print(f"VALIDATOR PASS — {repo_full_name} @ {commit_sha[:7]} — exit 0")
-        state["validator_summary"] = "All tests passed. No failures."
+        state["retry_count"] = current_retry  # Do not increment
+        confidence = max(65.0, 95.0 - (current_retry * 10.0))
+        state["confidence_score"] = round(confidence, 1)
+        print(f"VALIDATOR PASS — {repo_full_name} @ {commit_sha[:7]} — exit 0 — confidence: {state['confidence_score']}%")
+        state["validator_summary"] = f"All tests passed in Docker sandbox. Confidence: {state['confidence_score']}%."
         
     # 2. Handle FAIL (no cascade, just standard failure)
     else:
@@ -109,11 +123,20 @@ def capture_baseline(state: Dict[str, Any]) -> Dict[str, Any]:
         
     repo_full_name = state.get("repo_full_name", "")
     commit_sha = state.get("commit_sha", "")
-    repo_url = f"https://github.com/{repo_full_name}" if repo_full_name else ""
+    token = os.getenv("GITHUB_PAT")
+    if token and repo_full_name:
+        repo_url = f"https://x-access-token:{token}@github.com/{repo_full_name}.git"
+    else:
+        repo_url = f"https://github.com/{repo_full_name}" if repo_full_name else ""
     
     # 1. Run sandbox with NO patch (force fresh container — warm may be on wrong branch)
     sandbox_result = run_sandbox(repo_url, commit_sha, patch_diff=None)
     output = sandbox_result.get("output", "")
+    
+    # If the incoming event had only a commit message or missing log, use the real baseline failure output
+    if output and ("FAILED" in output or "ERROR" in output) and (not state.get("failure_log") or "FAILED" not in state.get("failure_log", "")):
+        state["failure_log"] = output
+        print(f"BASELINE FAILURE LOG INJECTED into state ({len(output)} chars)")
     
     # 2. Parse pytest output
     passing_tests = set()

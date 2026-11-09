@@ -101,7 +101,15 @@ class ArcaneState(TypedDict, total=False):
 
     # ── PATCHING outputs ──
     patch_diff: str
+    patched_content: str
     retry_count: int
+    memory_hit: dict
+    fast_forward_patch: bool
+    validator_summary: str
+    test_output: str
+    conflict_action: str
+    conflict_score: float
+    conflict_details: list
 
     # ── PROPAGATING outputs ──
     cascade_failure: bool
@@ -367,6 +375,14 @@ def creating_pr_node(state: ArcaneState) -> ArcaneState:
     """CREATING_PR — opens a pull request on GitHub with the patch + test."""
     logger.info("[CREATING_PR] Opening pull request")
     try:
+        import os as _os
+        if _os.getenv("ARCANE_DRY_RUN", "").lower() in ("1", "true", "yes"):
+            logger.info("[CREATING_PR] ARCANE_DRY_RUN is set — skipping the real GitHub call")
+            sha = state.get("commit_sha", "unknown")[:7]
+            return {
+                **state,
+                "pr_url": f"https://github.com/{state.get('repo_full_name', 'org/repo')}/pull/dry-run-{sha}",
+            }
         if create_pr:
             pr_url = create_pr(state)
             result = {**state, "pr_url": pr_url}
@@ -474,17 +490,29 @@ def after_patching(state: ArcaneState) -> str:
 def after_validating(state: ArcaneState) -> str:
     """After VALIDATING: route based on test results + confidence + retry count."""
     confidence = state.get("confidence_score", 0)
-    # Confidence gating: < 60% means do NOT attempt PR, escalate immediately
-    if isinstance(confidence, (int, float)) and confidence < 60:
-        logger.warning(
-            f"[VALIDATING] Confidence {confidence}% < 60% — too low, escalating"
-        )
-        return "escalated"
+    retries = state.get("retry_count", 0)
+    
+    # If tests passed with high confidence → generate regression test + PR
     if state.get("tests_passed"):
         return "generating_test"
-    if state.get("retry_count", 0) >= MAX_RETRIES:
+    
+    # If retries exhausted → escalate regardless
+    if retries >= MAX_RETRIES:
         logger.warning("[VALIDATING] Retry cap reached — escalating")
         return "escalated"
+    
+    # Cascade failure or low confidence but retries remain → loop back to try again
+    if state.get("cascade_failure") and retries < MAX_RETRIES:
+        logger.info(f"[VALIDATING] Cascade failure on attempt {retries} — looping back to PATCHING with cascade context")
+        return "patching"
+    
+    # Confidence gating: < 60% with no retries left means escalate
+    if isinstance(confidence, (int, float)) and confidence < 60 and retries >= MAX_RETRIES:
+        logger.warning(
+            f"[VALIDATING] Confidence {confidence}% < 60% and retries exhausted — escalating"
+        )
+        return "escalated"
+    
     logger.info("[VALIDATING] Tests failed — looping back to PATCHING")
     return "patching"
 

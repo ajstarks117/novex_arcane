@@ -1,8 +1,16 @@
 import os
 import logging
 import requests
+from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+
+# Always load .env so API keys and model overrides are present
+load_dotenv(override=True)
+
+# Model ids are configurable — Google retires models regularly.
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+GEMMA_MODEL = os.getenv("GEMMA_MODEL", "gemma-4-31b-it")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -73,9 +81,12 @@ def _pick_fallback(system: str) -> str:
 def call_ollama(prompt: str, system: str = '') -> str:
     """
     Tier 3 fallback: local Ollama llama3:8b.
-    Ollama is already running as a background service on port 11434.
-    If Ollama is also unavailable, falls back to static offline mocks.
+    Skipped if OLLAMA_DISABLED is set or when model is downloading.
     """
+    if os.getenv("OLLAMA_DISABLED", "0").lower() in ("1", "true", "yes"):
+        logger.info("[LLM_Client] Ollama call bypassed (OLLAMA_DISABLED=1).")
+        return _pick_fallback(system)
+
     logger.info("Path used: Ollama Fallback (llama3:8b)")
     try:
         base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -100,7 +111,7 @@ def call_gemma(prompt: str, system: str = '') -> str:
         return call_ollama(prompt, system)
 
     try:
-        logger.info("Path used: Google Gemma 3 (gemma-3-27b-it)")
+        logger.info(f"Path used: Google Gemma ({GEMMA_MODEL})")
         client = genai.Client(api_key=api_key)
 
         # Gemma does NOT support system_instruction — prepend it to the prompt
@@ -109,7 +120,7 @@ def call_gemma(prompt: str, system: str = '') -> str:
         config = types.GenerateContentConfig(temperature=0.2)
 
         response = client.models.generate_content(
-            model="gemma-3-27b-it",
+            model=GEMMA_MODEL,
             contents=full_prompt,
 
             config=config,
@@ -141,7 +152,7 @@ def call_llm(prompt: str, system: str = '') -> str:
         return call_ollama(prompt, system)
 
     try:
-        logger.info("Path used: Google Gemini (gemini-2.5-flash)")
+        logger.info(f"Path used: Google Gemini ({GEMINI_MODEL})")
         client = genai.Client(api_key=api_key)
 
         config = types.GenerateContentConfig(temperature=0.2)
@@ -152,7 +163,7 @@ def call_llm(prompt: str, system: str = '') -> str:
             )
 
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=GEMINI_MODEL,
             contents=prompt,
             config=config,
         )
@@ -160,10 +171,11 @@ def call_llm(prompt: str, system: str = '') -> str:
 
     except Exception as e:
         err = str(e).lower()
-        if "429" in err or "quota" in err or "exhausted" in err or "resource_exhausted" in err:
-            logger.warning("[LLM_Client] Gemini Flash rate limit hit! Trying Gemma 3 27B...")
-            return call_gemma(prompt, system)
-
-        logger.error(f"[LLM_Client] Gemini API call failed: {e}")
-        return f"Error: Gemini API call failed: {e}"
+        if any(t in err for t in ("429", "quota", "exhausted", "resource_exhausted", "404", "not_found", "no longer available", "503", "unavailable", "overloaded")):
+            logger.warning("[LLM_Client] Gemini unavailable (rate limit or retired model)! Trying Gemma...")
+        elif "400" in err or "invalid" in err or "api_key" in err:
+            logger.warning(f"[LLM_Client] Gemini API key invalid or bad request! Trying Gemma... ({e})")
+        else:
+            logger.warning(f"[LLM_Client] Gemini API call failed: {e}. Trying Gemma...")
+        return call_gemma(prompt, system)
 

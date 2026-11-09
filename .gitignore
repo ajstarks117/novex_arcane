@@ -1,6 +1,19 @@
 .env
-__pycache__
+__pycache__/
 *.pyc
 .DS_Store
-node_modules
-.venv
+node_modules/
+.venv/
+data/
+chroma_data/
+memory/
+.pytest_cache/
+dist/
+
+# Local demo & preview repositories
+arcane-demo-repo/
+arcane-live-preview/
+arcane-test-preview/
+ARCANE-DEMO-REPO/
+ARCANE-LIVE-PREVIEW/
+ARCANE-TEST-PREVIEW/

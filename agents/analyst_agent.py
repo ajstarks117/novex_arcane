@@ -27,8 +27,14 @@ def analyze(state: Dict[str, Any]) -> Dict[str, Any]:
 
         
         if memory_match:
-            logger.info(f"[Analyst] 🧠 CHROMA MEMORY HIT! Bypassing LLM analysis. Matched commit: {memory_match.get('commit_sha')}")
-            
+            try:
+                from api.store import store as _store
+                if _store.memory_flags.get(memory_match.get("commit_sha"), True) is False:
+                    logger.info("[Analyst] Memory match ignored — reuse disabled by a reviewer")
+                    memory_match = None
+            except Exception:
+                pass
+        if memory_match:
             patch = memory_match.get("patch_diff", "")
             failing_file = "unknown_file.py"
             # Extract filename from patch header (e.g., --- a/api/auth.py)
@@ -37,30 +43,37 @@ def analyze(state: Dict[str, Any]) -> Dict[str, Any]:
                     failing_file = line[6:].strip()
                     break
 
-            return {
-                **state,
-                "memory_hit": memory_match, # Store for PR agent
-                "failing_test": memory_match.get("test_file", "unknown_test"),
-                "failing_file": failing_file,
-                "failing_line": 0,
-                "root_cause_summary": memory_match.get("root_cause", ""),
-                "patch_diff": patch,
-                "fast_forward_patch": True
+            invalid_placeholders = {
+                "unknown_file", "unknown_file.py", "unknown", "", None,
+                "n/a", "na", "n/a.", "none", "not available", "not_available"
             }
+            commit_sha = str(memory_match.get("commit_sha", ""))
+            if (
+                not patch
+                or not patch.strip()
+                or failing_file.strip().lower() in invalid_placeholders
+                or commit_sha.startswith("manual")
+            ):
+                logger.info(
+                    f"[Analyst] Memory match discarded because patch, failing_file '{failing_file}', or commit '{commit_sha}' is invalid."
+                )
+                memory_match = None
+            else:
+                logger.info(
+                    f"[Analyst] 🧠 CHROMA MEMORY HIT! Bypassing LLM analysis. Matched commit: {commit_sha}"
+                )
+                return {
+                    **state,
+                    "memory_hit": memory_match,  # Store for PR agent
+                    "failing_test": memory_match.get("test_file", "unknown_test"),
+                    "failing_file": failing_file,
+                    "failing_line": 0,
+                    "root_cause_summary": memory_match.get("root_cause", ""),
+                    "patch_diff": patch,
+                    "fast_forward_patch": True,
+                }
     except Exception as e:
         logger.error(f"[Analyst] ChromaDB memory check failed: {e}")
-
-    # HACKATHON DEMO MODE: If no memory hit, detect "trigger" keyword and return demo data
-    if "trigger" in failure_log.lower():
-        logger.info("[Analyst] Trigger keyword detected. Entering Demo Mode with sample data.")
-        return {
-            **state,
-            "failing_test": "tests/test_api.py::test_user_auth",
-            "failing_file": "api/auth.py",
-            "failing_line": 42,
-            "root_cause_summary": "Incorrect validation of JWT expiration timestamp leading to premature session termination.",
-            "suspected_function": "validate_token"
-        }
 
     system_prompt = (
         "You are an expert CI/CD failure analyst. Analyze the provided test failure log "
@@ -114,28 +127,26 @@ def analyze(state: Dict[str, Any]) -> Dict[str, Any]:
     failing_file = parsed_data.get("failing_file", "")
     failing_test = parsed_data.get("failing_test", "")
 
-    # If LLM couldn't extract a real failing file (commit message is not an error log),
-    # fall back to demo data to guarantee a proper patch and PR
+    # If LLM couldn't extract a real failing file, do not fabricate demo data
     placeholder_values = {
         "unknown_file", "unknown_file.py", "unknown", "", None,
         "N/A", "n/a", "na", "N/A.", "none", "None",
         "not available", "not_available", "unknown test", "unknown_test"
     }
-    if not failing_file or failing_file.strip() in placeholder_values:
-        logger.info("[Analyst] LLM could not extract failing_file from commit message — using demo data.")
+    normalized_placeholders = {p.lower() for p in placeholder_values if p}
+    if not failing_file or failing_file.strip().lower() in normalized_placeholders:
+        logger.warning(f"[Analyst] LLM could not extract a valid failing_file from log: '{failing_file}'")
         return {
             **state,
-            "failing_test": "tests/test_api.py::test_user_auth",
-            "failing_file": "api/auth.py",
-            "failing_line": 42,
-            "root_cause_summary": "Incorrect validation of JWT expiration timestamp leading to premature session termination.",
-            "suspected_function": "validate_token"
+            "error": f"Analyst could not identify a real failing file from the provided failure log (got '{failing_file}').",
+            "failing_file": "",
+            "failing_test": failing_test or "",
         }
 
     # Update state with the extracted fields
     return {
         **state,
-        "failing_test": failing_test or "tests/test_api.py::test_user_auth",
+        "failing_test": failing_test,
         "failing_file": failing_file,
         "failing_line": parsed_data.get("failing_line", 0),
         "root_cause_summary": parsed_data.get("root_cause_summary", "Could not determine root cause."),

@@ -10,3 +10,5 @@ tree-sitter-python
 sentence-transformers
 pytest
 httpx
+requests
+google-genai
