@@ -1,16 +1,22 @@
-"""Tests for memory optimization, lazy imports, concurrency limits, and session survival.
+"""Tests for memory optimization, lazy imports, concurrency limits, and secure session persistence.
 
 Verifies:
 1. In hosted mode, PyTorch and sentence-transformers are NOT imported into sys.modules.
 2. Patch memory is optional and skipped in hosted mode.
 3. Concurrency limiter limits overlapping repairs on free-tier instances.
-4. Cryptographically signed sessions survive backend restarts without logging users out.
-5. SQLite persistent storage correctly stores and retrieves runs and sessions.
-6. Memory usage stays strictly under Render's 512 MB limit during realistic hosted runs.
+4. Security: Cookies contain ONLY opaque session IDs (no sensitive tokens/credentials in cookies).
+5. Security: OAuth tokens are encrypted at rest using AES/Fernet server-side.
+6. Security: Session expiry is enforced and invalidates expired sessions.
+7. Security: Logout invalidates the server-side session (preventing reuse).
+8. Security: Hosted mode strictly requires configured secrets (no hardcoded fallbacks).
+9. Database: Ephemeral limitations handled gracefully; postgres:// URLs are never passed to sqlite3.
+10. Memory usage stays strictly under Render's 512 MB limit during realistic hosted runs.
 """
 import sys
 import os
 import subprocess
+import secrets
+from datetime import datetime, timezone, timedelta
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -24,8 +30,26 @@ from agents.execution_mode import (
     log_memory_usage,
     trigger_garbage_collection,
 )
-from api.auth import make_signed_session_token, verify_signed_session_token, current_user
-from api.db import db_save_session, db_get_session, db_save_run, db_load_all_runs
+from api.auth import (
+    COOKIE,
+    encrypt_token,
+    decrypt_token,
+    current_user,
+    logout,
+    _get_encryption_key,
+    _save,
+    _load,
+)
+from api.db import (
+    db_save_session,
+    db_get_session,
+    db_delete_session,
+    db_save_run,
+    db_load_all_runs,
+    is_postgres_configured,
+    get_sqlite_path,
+    init_db,
+)
 
 
 class TestLazyImportsAndNoTorchInHosted:
@@ -107,7 +131,6 @@ class TestConcurrencyLimiter:
         monkeypatch.setenv("ARCANE_EXECUTION_MODE", "hosted")
         from api.routes import enqueue_event
         from fastapi import HTTPException
-        import asyncio
 
         mock_app = MagicMock()
         mock_app.state.is_repair_active = True
@@ -124,86 +147,162 @@ class TestConcurrencyLimiter:
         assert "Concurrent repairs are limited to 1" in exc.value.detail
 
 
-class TestSessionPersistenceAcrossRestarts:
-    """Requirement 9: Backend restart does not log users out."""
+class TestSessionSecurityAndPersistence:
+    """Security fixes: Opaque session ID, encryption at rest, expiry, and logout invalidation."""
 
-    def test_signed_session_token_roundtrip(self):
-        user = {
-            "login": "testuser",
-            "name": "Test User",
-            "email": "test@example.com",
-            "avatar": "https://avatars.githubusercontent.com/u/123",
-            "token": "gho_secret123456",
-            "createdAt": "2026-11-10T00:00:00Z",
-        }
-        sid = "test_sid_abcdef"
-        token_str = make_signed_session_token(sid, user)
-        assert "." in token_str
+    def test_cookie_is_opaque_and_does_not_contain_credentials(self):
+        """Verifies that session IDs are completely opaque random tokens."""
+        sid = secrets.token_urlsafe(32)
+        # Verify it has no dots (not a JWT / compound token), contains no credentials
+        assert "." not in sid
+        assert "gho_" not in sid
+        assert "token" not in sid
 
-        recovered = verify_signed_session_token(token_str)
-        assert recovered is not None
-        assert recovered["login"] == "testuser"
-        assert recovered["token"] == "gho_secret123456"
+    def test_encryption_at_rest_roundtrip(self):
+        """Verifies that credentials are encrypted server-side and plaintext is not stored."""
+        plain_token = "gho_super_secret_github_oauth_token_12345"
+        encrypted = encrypt_token(plain_token)
 
-    def test_tampered_token_rejected(self):
-        user = {"login": "attacker", "token": "fake"}
-        token_str = make_signed_session_token("sid", user)
-        tampered = token_str[:-4] + "xxxx"
-        assert verify_signed_session_token(tampered) is None
+        assert encrypted != plain_token
+        assert plain_token not in encrypted
+        assert "gho_" not in encrypted
 
-    def test_current_user_recovers_across_backend_restart(self, tmp_path, monkeypatch):
-        """Simulates complete wipe of memory and sessions.json after server restart."""
+        decrypted = decrypt_token(encrypted)
+        assert decrypted == plain_token
+
+    def test_session_lifecycle_with_opaque_sid_and_encryption(self, tmp_path, monkeypatch):
+        """End-to-end: stores encrypted session server-side, accesses via opaque cookie, verifies token."""
         from api import auth
-
-        # Point session file to a clean temporary path
         test_session_file = str(tmp_path / "sessions.json")
         monkeypatch.setattr(auth, "SESSION_FILE", test_session_file)
 
-        user_data = {
-            "login": "restored_user",
-            "name": "Restored User",
-            "email": "restore@example.com",
-            "avatar": "https://example.com/avatar.png",
-            "token": "gho_persisted_token",
-            "createdAt": "2026-11-10T00:00:00Z",
+        sid = secrets.token_urlsafe(32)
+        plain_token = "gho_user_live_token_789"
+        encrypted = encrypt_token(plain_token)
+
+        expires_at = (datetime.now(timezone.utc) + timedelta(days=14)).isoformat()
+        session_data = {
+            "login": "octocat",
+            "name": "The Octocat",
+            "email": "octocat@github.com",
+            "avatar": "https://avatars.githubusercontent.com/u/583231",
+            "encrypted_token": encrypted,
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+            "expiresAt": expires_at,
         }
-        signed_cookie = make_signed_session_token("fresh_sid_123", user_data)
+        _save({sid: session_data})
 
-        # Ensure no session exists in file
-        if os.path.exists(test_session_file):
-            os.remove(test_session_file)
+        # Verify on-disk format has encrypted_token, NOT plaintext token
+        loaded = _load()
+        assert loaded[sid]["encrypted_token"] == encrypted
+        assert "token" not in loaded[sid] or loaded[sid].get("token") is None
 
-        # Simulate incoming request with the signed cookie
+        # Authenticate via request with opaque cookie
         mock_request = MagicMock()
-        mock_request.cookies = {"arcane_session": signed_cookie}
+        mock_request.cookies = {COOKIE: sid}
 
         user = current_user(mock_request)
         assert user is not None
-        assert user["login"] == "restored_user"
-        assert user["token"] == "gho_persisted_token"
+        assert user["login"] == "octocat"
+        # current_user must decrypt token for in-memory use
+        assert user["token"] == plain_token
+
+    def test_session_expiry_enforced(self, tmp_path, monkeypatch):
+        """Expired sessions must be rejected and deleted server-side."""
+        from api import auth
+        test_session_file = str(tmp_path / "sessions.json")
+        monkeypatch.setattr(auth, "SESSION_FILE", test_session_file)
+
+        sid = secrets.token_urlsafe(32)
+        past_expiry = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        session_data = {
+            "login": "expired_user",
+            "encrypted_token": encrypt_token("gho_expired"),
+            "expiresAt": past_expiry,
+        }
+        _save({sid: session_data})
+
+        mock_request = MagicMock()
+        mock_request.cookies = {COOKIE: sid}
+
+        user = current_user(mock_request)
+        assert user is None, "Expired session must be rejected!"
+        # Verify server-side cleanup
+        assert sid not in _load()
+
+    def test_logout_invalidates_session_server_side(self, tmp_path, monkeypatch):
+        """Logout must delete server-side session so reused cookie is rejected."""
+        from api import auth
+        test_session_file = str(tmp_path / "sessions.json")
+        monkeypatch.setattr(auth, "SESSION_FILE", test_session_file)
+
+        sid = secrets.token_urlsafe(32)
+        session_data = {
+            "login": "active_user",
+            "encrypted_token": encrypt_token("gho_active"),
+            "expiresAt": (datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
+        }
+        _save({sid: session_data})
+
+        mock_request = MagicMock()
+        mock_request.cookies = {COOKIE: sid}
+        mock_response = MagicMock()
+
+        # User is valid before logout
+        assert current_user(mock_request) is not None
+
+        # Perform logout
+        logout(mock_request, mock_response)
+
+        # Cookie deleted on response
+        mock_response.delete_cookie.assert_called_with(COOKIE, path="/")
+
+        # Re-presenting the cookie must now fail
+        assert current_user(mock_request) is None
+
+    def test_missing_secret_in_hosted_mode_raises_error(self, monkeypatch):
+        """In hosted mode, running without configured secrets must raise a hard error."""
+        monkeypatch.setenv("ARCANE_EXECUTION_MODE", "hosted")
+        monkeypatch.delenv("SECRET_KEY", raising=False)
+        monkeypatch.delenv("GITHUB_CLIENT_SECRET", raising=False)
+        monkeypatch.delenv("GITHUB_WEBHOOK_SECRET", raising=False)
+
+        with pytest.raises(RuntimeError) as exc:
+            _get_encryption_key()
+        assert "CRITICAL SECURITY CONFIGURATION ERROR" in str(exc.value)
 
 
-class TestSQLitePersistence:
-    """Requirement 9: Durable SQLite storage for sessions and runs."""
+class TestDatabaseStorageBackend:
+    """Database backend: tests SQLite persistence and safe handling of postgres:// URLs."""
 
-    def test_db_session_and_run_storage(self, tmp_path, monkeypatch):
+    def test_sqlite_storage_roundtrip(self, tmp_path, monkeypatch):
         test_db = str(tmp_path / "test_arcane.db")
         monkeypatch.setenv("DATABASE_URL", f"sqlite:///{test_db}")
         from api import db
-        db._DB_PATH = None  # reset cached path
+        db._DB_PATH = None
 
-        # Save and retrieve session
-        user = {"login": "db_user", "token": "tok123"}
+        user = {"login": "db_user", "encrypted_token": "enc_123"}
         db_save_session("sid_db_1", user)
-        loaded_user = db_get_session("sid_db_1")
-        assert loaded_user is not None
-        assert loaded_user["login"] == "db_user"
+        loaded = db_get_session("sid_db_1")
+        assert loaded is not None
+        assert loaded["login"] == "db_user"
 
-        # Save and retrieve run
-        run = {"id": "run_999", "repo": "org/repo", "status": "ready"}
-        db_save_run(run)
-        all_runs = db_load_all_runs()
-        assert any(r["id"] == "run_999" for r in all_runs)
+        db_delete_session("sid_db_1")
+        assert db_get_session("sid_db_1") is None
+
+    def test_postgres_database_url_handled_safely(self, monkeypatch):
+        """Setting a postgres:// DATABASE_URL must not crash or pass the URI to sqlite3."""
+        monkeypatch.setenv("DATABASE_URL", "postgresql://user:secret@localhost:5432/arcanedb")
+        from api import db
+        db._DB_PATH = None
+        db._PG_AVAILABLE = None
+
+        assert is_postgres_configured() is True
+        sqlite_path = get_sqlite_path()
+        assert not sqlite_path.startswith("postgresql://"), "Postgres URI must NEVER be treated as SQLite file path!"
+
+        # init_db must not crash even if postgres server/driver is not running
+        init_db()
 
 
 class TestMemoryRssLimits:

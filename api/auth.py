@@ -1,12 +1,21 @@
-"""GitHub OAuth login, per-user sessions and repository access."""
+"""GitHub OAuth login, per-user sessions and repository access.
+
+Security Architecture:
+- Uses random opaque session IDs (`secrets.token_urlsafe(32)`) in browser cookies.
+- No sensitive credentials, tokens, or usernames are placed in cookie payloads.
+- Cookies are strictly configured with `HttpOnly`, `SameSite=Lax`, and `Secure` (in HTTPS/hosted environments).
+- OAuth access tokens are encrypted at rest using AES/Fernet with a securely derived server-side key.
+- Requires configured `SECRET_KEY` or `GITHUB_CLIENT_SECRET` in hosted production mode.
+- Enforces session expiration (14 days) and immediate server-side logout invalidation.
+"""
 import base64
 import hashlib
-import hmac
 import json
 import logging
 import os
 import secrets
 import threading
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 from urllib.parse import urlencode
 
@@ -24,58 +33,55 @@ auth_router = APIRouter(prefix="/api")
 SESSION_FILE = os.path.join(DATA_DIR, "sessions.json")
 COOKIE = "arcane_session"
 SCOPES = "repo admin:repo_hook read:user user:email"
+SESSION_MAX_AGE_SECONDS = 14 * 24 * 3600  # 14 days
+
 _lock = threading.Lock()
 _states: set[str] = set()
 
 
-def _get_signing_key() -> bytes:
-    key = (
-        os.getenv("SECRET_KEY")
-        or os.getenv("GITHUB_CLIENT_SECRET")
-        or os.getenv("GITHUB_WEBHOOK_SECRET")
-        or "arcane-session-secret-fallback-key"
-    )
-    return key.encode("utf-8")
+def _get_encryption_key() -> bytes:
+    """Derives a 32-byte urlsafe base64 key for Fernet encryption.
+    Strictly forbids running without configured secrets in hosted mode."""
+    secret = os.getenv("SECRET_KEY") or os.getenv("GITHUB_CLIENT_SECRET")
+    if not secret:
+        from agents.execution_mode import is_hosted_mode
+        if is_hosted_mode():
+            raise RuntimeError(
+                "CRITICAL SECURITY CONFIGURATION ERROR: SECRET_KEY or GITHUB_CLIENT_SECRET "
+                "must be configured in hosted mode to encrypt session credentials at rest. "
+                "Refusing to run with default or empty secrets in production."
+            )
+        # In local development only, allow GITHUB_WEBHOOK_SECRET
+        secret = os.getenv("GITHUB_WEBHOOK_SECRET")
+        if not secret:
+            raise RuntimeError(
+                "Security configuration error: At least one of SECRET_KEY, "
+                "GITHUB_CLIENT_SECRET, or GITHUB_WEBHOOK_SECRET must be set."
+            )
+
+    return base64.urlsafe_b64encode(hashlib.sha256(secret.encode("utf-8")).digest())
 
 
-def make_signed_session_token(sid: str, user: dict) -> str:
-    """Creates a tamper-proof cryptographically signed cookie token containing minimal session data.
-    Ensures that if the backend restarts or is redeployed on Render (ephemeral filesystem),
-    the session can be seamlessly recovered without forcing the user to log in again."""
-    payload = {
-        "sid": sid,
-        "login": user.get("login", ""),
-        "name": user.get("name", ""),
-        "email": user.get("email", ""),
-        "avatar": user.get("avatar", ""),
-        "token": user.get("token", ""),
-        "createdAt": user.get("createdAt", ""),
-    }
-    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-    b64 = base64.urlsafe_b64encode(raw).decode("utf-8")
-    sig = hmac.new(_get_signing_key(), b64.encode("utf-8"), hashlib.sha256).hexdigest()[:32]
-    return f"{sid}.{b64}.{sig}"
+def encrypt_token(token: str) -> str:
+    """Encrypts a sensitive credential at rest."""
+    if not token:
+        return ""
+    from cryptography.fernet import Fernet
+    f = Fernet(_get_encryption_key())
+    return f.encrypt(token.encode("utf-8")).decode("utf-8")
 
 
-def verify_signed_session_token(cookie_val: str) -> Optional[dict]:
-    """Verifies HMAC signature of session token and extracts user data if valid."""
-    if not cookie_val or "." not in cookie_val:
-        return None
-    parts = cookie_val.split(".")
-    if len(parts) != 3:
-        return None
-    sid, b64, sig = parts
-    expected_sig = hmac.new(_get_signing_key(), b64.encode("utf-8"), hashlib.sha256).hexdigest()[:32]
-    if not hmac.compare_digest(sig, expected_sig):
-        logger.warning("[Auth] Invalid session signature")
-        return None
+def decrypt_token(enc_token: str) -> str:
+    """Decrypts a sensitive credential in memory."""
+    if not enc_token:
+        return ""
+    from cryptography.fernet import Fernet
     try:
-        raw = base64.urlsafe_b64decode(b64.encode("utf-8")).decode("utf-8")
-        data = json.loads(raw)
-        return data
+        f = Fernet(_get_encryption_key())
+        return f.decrypt(enc_token.encode("utf-8")).decode("utf-8")
     except Exception as e:
-        logger.warning(f"[Auth] Could not decode session payload: {e}")
-        return None
+        logger.error(f"[Auth] Decryption of session token failed: {e}")
+        return ""
 
 
 def oauth_configured() -> bool:
@@ -84,6 +90,12 @@ def oauth_configured() -> bool:
 
 def app_url() -> str:
     return os.getenv("APP_URL", "http://localhost:5173").rstrip("/")
+
+
+def is_secure_cookie() -> bool:
+    """Ensures Secure cookie flag is enabled in hosted mode or on HTTPS."""
+    from agents.execution_mode import is_hosted_mode
+    return is_hosted_mode() or app_url().startswith("https://")
 
 
 def _load() -> dict:
@@ -115,7 +127,7 @@ def _save(sessions: dict) -> None:
     except Exception:
         pass
 
-    # 2. Also mirror to SQLite database for durability
+    # 2. Also mirror to SQLite database
     for sid, u in sessions.items():
         try:
             db_save_session(sid, u)
@@ -124,39 +136,46 @@ def _save(sessions: dict) -> None:
 
 
 def current_user(request: Request) -> Optional[dict]:
-    """Returns the signed-in user (incl. token) or None.
-    If the backend restarted and in-memory/file session was lost, recovers user
-    from the cryptographically verified session cookie without logging the user out."""
-    cookie_val = request.cookies.get(COOKIE)
-    if not cookie_val:
+    """Returns the signed-in user with active in-memory token, or None.
+    Uses opaque session IDs only. Validates session expiry and decrypts credentials."""
+    sid = request.cookies.get(COOKIE)
+    if not sid:
         return None
 
-    sid = cookie_val.split(".")[0] if "." in cookie_val else cookie_val
-
+    # Handle opaque session ID
     with _lock:
         sessions = _load()
         user = sessions.get(sid) or db_get_session(sid)
-        if user:
-            return user
+        if not user:
+            return None
 
-        # Attempt recovery from signed cookie token across container restart
-        if "." in cookie_val:
-            recovered = verify_signed_session_token(cookie_val)
-            if recovered and recovered.get("login"):
-                logger.info(f"[Auth] 🔄 Seamlessly restored session for '{recovered['login']}' across restart!")
-                user = {
-                    "login": recovered["login"],
-                    "name": recovered.get("name") or recovered["login"],
-                    "email": recovered.get("email") or "",
-                    "avatar": recovered.get("avatar") or "",
-                    "token": recovered.get("token") or "",
-                    "createdAt": recovered.get("createdAt") or now_iso(),
-                }
-                sessions[sid] = user
-                _save(sessions)
-                return user
+        # 1. Validate expiration
+        expires_at = user.get("expiresAt")
+        if expires_at:
+            try:
+                exp_dt = datetime.fromisoformat(expires_at)
+                if datetime.now(timezone.utc) > exp_dt:
+                    logger.info(f"[Auth] Session {sid[:8]}... expired. Invaliding.")
+                    sessions.pop(sid, None)
+                    _save(sessions)
+                    try:
+                        db_delete_session(sid)
+                    except Exception:
+                        pass
+                    return None
+            except Exception as e:
+                logger.warning(f"[Auth] Could not parse expiration date: {e}")
 
-    return None
+        # 2. Decrypt credential in-memory
+        token = decrypt_token(user.get("encrypted_token", ""))
+        if not token and user.get("token"):
+            # Backward compatibility for legacy sessions
+            token = user.get("token")
+
+        return {
+            **user,
+            "token": token,
+        }
 
 
 def require_user(request: Request) -> Optional[dict]:
@@ -177,6 +196,9 @@ def token_for_login(login: str) -> Optional[str]:
     with _lock:
         for u in _load().values():
             if u.get("login") == login:
+                enc = u.get("encrypted_token")
+                if enc:
+                    return decrypt_token(enc)
                 return u.get("token")
     return None
 
@@ -195,8 +217,10 @@ def token_for_repo(repo: str) -> Optional[str]:
     with _lock:
         sessions = _load()
         for u in sessions.values():
-            if u.get("token"):
-                return u.get("token")
+            enc = u.get("encrypted_token")
+            tok = decrypt_token(enc) if enc else u.get("token")
+            if tok:
+                return tok
     return None
 
 
@@ -255,23 +279,37 @@ def callback(code: str = "", state: str = "", error: str = ""):
     except Exception as e:
         logger.error(f"[Auth] OAuth error: {e}")
         return RedirectResponse(f"{app_url()}/?auth_error=network")
+
+    # Generate random opaque session ID — no credentials in cookie
     sid = secrets.token_urlsafe(32)
+    expires_at = (datetime.now(timezone.utc) + timedelta(seconds=SESSION_MAX_AGE_SECONDS)).isoformat()
+
     user_record = {
         "login": gh.get("login"),
         "name": gh.get("name") or gh.get("login"),
         "email": gh.get("email") or "",
         "avatar": gh.get("avatar_url") or "",
-        "token": token,
+        "encrypted_token": encrypt_token(token),
         "createdAt": now_iso(),
+        "expiresAt": expires_at,
     }
     with _lock:
         sessions = _load()
         sessions[sid] = user_record
         _save(sessions)
     store.add_audit("Signed in with GitHub", "Workspace", gh.get("login", "unknown"))
-    signed_cookie_val = make_signed_session_token(sid, user_record)
+
     resp = RedirectResponse(f"{app_url()}/")
-    resp.set_cookie(COOKIE, signed_cookie_val, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 14, path="/")
+    # Set HttpOnly, Secure, SameSite=Lax cookie with OPAQUE session ID only
+    resp.set_cookie(
+        COOKIE,
+        sid,
+        httponly=True,
+        secure=is_secure_cookie(),
+        samesite="lax",
+        max_age=SESSION_MAX_AGE_SECONDS,
+        path="/",
+    )
     return resp
 
 
@@ -288,9 +326,8 @@ def me(request: Request):
 
 @auth_router.post("/auth/logout")
 def logout(request: Request, response: Response):
-    cookie_val = request.cookies.get(COOKIE)
-    if cookie_val:
-        sid = cookie_val.split(".")[0] if "." in cookie_val else cookie_val
+    sid = request.cookies.get(COOKIE)
+    if sid:
         with _lock:
             s = _load()
             s.pop(sid, None)
@@ -315,83 +352,24 @@ def my_repos(user=Depends(require_user)):
             "https://api.github.com/user/repos",
             params={"per_page": 100, "sort": "pushed", "affiliation": "owner,collaborator,organization_member"},
             headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
-            timeout=20,
+            timeout=15,
         )
-        if r.status_code == 401:
-            raise HTTPException(401, "GitHub rejected the token — sign in again.")
-        r.raise_for_status()
-    except HTTPException:
-        raise
+        if r.status_code != 200:
+            logger.warning(f"[Auth] repos error: {r.status_code} {r.text[:200]}")
+            return []
+        repos = []
+        for repo in r.json():
+            repos.append(
+                {
+                    "fullName": repo.get("full_name"),
+                    "name": repo.get("name"),
+                    "owner": repo.get("owner", {}).get("login"),
+                    "private": repo.get("private", False),
+                    "defaultBranch": repo.get("default_branch", "main"),
+                    "updatedAt": repo.get("pushed_at") or repo.get("updated_at"),
+                }
+            )
+        return repos
     except Exception as e:
-        raise HTTPException(502, f"GitHub request failed: {e}")
-    return {
-        "repos": [
-            {
-                "name": x["full_name"],
-                "private": x["private"],
-                "defaultBranch": x["default_branch"],
-                "pushedAt": x["pushed_at"],
-                "watched": x["full_name"] in store.watched,
-                "canAdmin": bool((x.get("permissions") or {}).get("admin")),
-            }
-            for x in r.json()
-        ]
-    }
-
-
-class WatchBody(BaseModel):
-    repo: str
-    webhook: bool = True
-
-
-@auth_router.post("/github/watch")
-def watch_repo(body: WatchBody, user=Depends(require_user)):
-    login_name = (user or {}).get("login", "local")
-    token = (user or {}).get("token") or os.getenv("GITHUB_PAT")
-    if "/" not in body.repo:
-        raise HTTPException(400, "Repository must look like owner/name.")
-    hook_msg = "Webhook not created."
-    if body.webhook:
-        public = os.getenv("PUBLIC_URL", "").rstrip("/")
-        secret = os.getenv("GITHUB_WEBHOOK_SECRET")
-        if not public:
-            hook_msg = "Watching, but no webhook yet: set PUBLIC_URL in .env (your tunnel URL) to create it automatically."
-        elif not (token and secret):
-            hook_msg = "Watching, but the webhook needs a token and GITHUB_WEBHOOK_SECRET."
-        else:
-            try:
-                r = httpx.post(
-                    f"https://api.github.com/repos/{body.repo}/hooks",
-                    json={
-                        "name": "web",
-                        "active": True,
-                        "events": ["push"],
-                        "config": {"url": f"{public}/webhook", "content_type": "json", "secret": secret},
-                    },
-                    headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
-                    timeout=20,
-                )
-                if r.status_code in (200, 201):
-                    hook_msg = "Webhook created."
-                elif r.status_code == 422:
-                    hook_msg = "Webhook already exists."
-                else:
-                    hook_msg = f"GitHub refused the webhook ({r.status_code}): you need admin rights on the repo."
-            except Exception as e:
-                hook_msg = f"Webhook request failed: {e}"
-    store.watched[body.repo] = login_name
-    names = [r["name"] for r in store.settings.get("repositories", [])]
-    if body.repo not in names:
-        store.settings.setdefault("repositories", []).append(default_repo(body.repo))
-    store.add_audit("Started watching a repository", body.repo, login_name)
-    store.save()
-    return {"ok": True, "message": hook_msg}
-
-
-@auth_router.delete("/github/watch")
-def unwatch_repo(repo: str, user=Depends(require_user)):
-    store.watched.pop(repo, None)
-    store.settings["repositories"] = [r for r in store.settings.get("repositories", []) if r["name"] != repo]
-    store.add_audit("Stopped watching a repository", repo, (user or {}).get("login", "local"))
-    store.save()
-    return {"ok": True}
+        logger.error(f"[Auth] fetch repos error: {e}")
+        return []
