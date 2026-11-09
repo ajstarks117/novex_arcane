@@ -39,6 +39,29 @@ All of this happens **autonomously** — no human in the loop.
 
 ---
 
+## 🎯 Quick Demo Walkthrough: How to Test ARCANE in 5 Steps
+
+If you are new to ARCANE or want to test the autonomous self-healing pipeline immediately, you can trigger a live repair using our demo repository:
+
+### 🔗 Demo Repository:
+👉 **[aryanketkar-15/arcane-demo-repo](https://github.com/aryanketkar-15/arcane-demo-repo)** *(or [ajstarks117/TEST-REPO](https://github.com/ajstarks117/TEST-REPO))*
+
+### 🧪 5 Steps to Test ARCANE:
+
+* **STEP 1:** Open the demo repository on GitHub: [aryanketkar-15/arcane-demo-repo](https://github.com/aryanketkar-15/arcane-demo-repo).
+* **STEP 2:** Go to the **Actions** tab and pick any failed test / workflow run.
+* **STEP 3:** Copy the Actions URL directly from the address bar of your browser (e.g. `https://github.com/aryanketkar-15/arcane-demo-repo/actions/runs/123456789`).
+* **STEP 4:** Go to the **ARCANE Dashboard** (http://localhost:5173/) and paste the URL in the **START REPAIR** section.
+* **STEP 5:** **Watch ARCANE perform its job in real-time:**
+  1. 🔍 **Log Analysis:** The Analyst Agent extracts the failing test, file, and root cause.
+  2. 🧬 **Git Bisect in Docker:** A sandbox container boots and isolates the breaking commit.
+  3. 🧠 **Patch Generation:** Gemini produces a minimal unified diff.
+  4. 🔄 **Conflict & Impact Checks:** AST differ verifies mergeability and cross-file dependencies.
+  5. 🐳 **Sandbox Validation:** Docker applies the patch and runs `pytest -v` to ensure 100% test passing without cascade breaks.
+  6. 📝 **PR Creation:** ARCANE opens a tested Pull Request with an auto-generated regression test and Mermaid pipeline diagram!
+
+---
+
 ## 🏛️ Architecture
 
 ```mermaid
