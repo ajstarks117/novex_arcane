@@ -210,7 +210,13 @@ async function githubRepos() {
   };
 }
 
+export type ModelCredential = { id: number; provider: "google" | "openai" | "groq"; model: string };
+
 export const api = {
+  modelKeys: () => request<ModelCredential[]>("/settings/model-keys"),
+  addModelKey: (provider: ModelCredential["provider"], model: string, key: string) =>
+    post("/settings/model-keys", { provider, model, key }),
+  removeModelKey: (id: number) => request(`/settings/model-keys/${id}`, { method: "DELETE" }),
   overview: () => request<Overview>("/overview"),
   runs: async (q = "") => {
     const { runs } = await request<{ runs: Run[] }>(`/runs${q}`);

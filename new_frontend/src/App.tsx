@@ -11,6 +11,7 @@ import {
   type AuditRow,
   type GhRepo,
   type MemoryItem,
+  type ModelCredential,
   type Run,
   type Screen,
   type Settings,
@@ -1373,7 +1374,7 @@ function Settings() {
   const head = (title: string, description: string) => (
     <div className="settings-head">
       <div><h2>{title}</h2><p>{description}</p></div>
-      <Button kind="primary" onClick={save}>Save changes</Button>
+      {tab !== "Models" && <Button kind="primary" onClick={save}>Save changes</Button>}
     </div>
   );
   return (
@@ -1502,51 +1503,55 @@ function RepositorySettings({ d, set, head }: SP) {
   );
 }
 
-function ModelSettings({ d, set, head }: SP) {
-  const { notify } = useData();
-  const [status, setStatus] = useState(d.modelStatus);
-  const move = (i: number, dir: -1 | 1) => {
-    const j = i + dir;
-    if (j < 0 || j >= d.models.length) return;
-    const m = [...d.models];
-    [m[i], m[j]] = [m[j], m[i]];
-    set({ ...d, models: m.map((x, k) => ({ ...x, role: k === 0 ? "Primary" : `Fallback ${k}` })) });
-  };
-  return (
-    <>
-      {head("Models", "ARCANE tries these models in order when a repair needs another approach.")}
-      <div className="settings-block">
-        <div className="block-title">
-          <div><h3>Fallback order</h3><p>Use the arrows to change the order. The runtime chain in llm_client.py is Gemini → Gemma → Ollama → mock.</p></div>
-        </div>
-        <div className="model-list">
-          {d.models.map((m, i) => {
-            const st = status[m.id];
-            return (
-              <div className="model-row" key={m.id}>
-                <span className="order">{i + 1}</span>
-                <div>
-                  <strong>{m.name}</strong>
-                  <small>{m.role} · {st?.connected ? "Connected" : "Unavailable"} · {st?.detail}</small>
-                </div>
-                <Button onClick={() => move(i, -1)} disabled={i === 0}>↑</Button>
-                <Button onClick={() => move(i, 1)} disabled={i === d.models.length - 1}>↓</Button>
-                <Button
-                  onClick={async () => {
-                    const r = await api.testModel(m.id);
-                    setStatus({ ...status, [m.id]: r });
-                    notify(`${m.name}: ${r.connected ? "connected" : "not reachable"}`);
-                  }}
-                >
-                  Test connection
-                </Button>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </>
-  );
+function ModelSettings({ head }: SP) {
+  const [rows, setRows] = useState<ModelCredential[]>([]);
+  const [provider, setProvider] = useState<ModelCredential["provider"]>("google");
+  const [model, setModel] = useState("");
+  const [key, setKey] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(true);
+  useEffect(() => {
+    api.modelKeys().then(setRows).catch(e => setError(e.message)).finally(() => setBusy(false));
+  }, []);
+
+  async function update(id?: number) {
+    setBusy(true);
+    setError("");
+    try {
+      if (id === undefined) {
+        await api.addModelKey(provider, model.trim(), key.trim());
+        setKey("");
+      } else {
+        await api.removeModelKey(id);
+      }
+      setRows(await api.modelKeys());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not update model keys.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <>
+    {head("Models", "Your repairs try your keys in the order shown, then use the server fallbacks.")}
+    <div className="settings-block">
+      <h3>Personal model keys</h3>
+      <p>Each listed provider can receive repair prompts, including repository code and failure logs. Changes apply to new repairs.</p>
+      {rows.map((row, i) => <div className="model-row" key={row.id}>
+        <span className="order">{i + 1}</span>
+        <strong>{row.provider} / {row.model}</strong>
+        <Button disabled={busy} onClick={() => update(row.id)}>Remove</Button>
+      </div>)}
+      {!busy && !error && !rows.length && <p>Using server fallbacks.</p>}
+      <Field label="Provider"><select value={provider} onChange={e => setProvider(e.target.value as ModelCredential["provider"])}>
+        <option value="google">Google</option><option value="openai">OpenAI</option><option value="groq">Groq</option>
+      </select></Field>
+      <Field label="Model ID"><input value={model} onChange={e => setModel(e.target.value)} placeholder="Model ID from your provider" /></Field>
+      <Field label="API key"><input type="password" autoComplete="new-password" value={key} onChange={e => setKey(e.target.value)} /></Field>
+      <Button disabled={busy || !key.trim() || !model.trim()} onClick={() => update()}>Add key</Button>
+      {error && <p role="alert">{error}</p>}
+    </div>
+  </>;
 }
 
 function SafetySettings({ d, set, head }: SP) {
