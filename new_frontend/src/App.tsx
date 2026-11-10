@@ -65,7 +65,7 @@ function AppShell({
     ["people", "person", "Sent to a person", counts?.person || undefined],
     ["history", "history", "Past fixes", undefined],
   ];
-  const workspace = settings?.workspace ?? "Team Bahadur";
+  const workspace = settings?.workspace ?? "Team Mosambi";
   const repos = Array.from(new Set([...(settings?.repositories.map((r) => r.name) ?? []), ...runs.map((r) => r.repo)]));
   return (
     <div className="app-shell">
