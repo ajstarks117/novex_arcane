@@ -323,7 +323,7 @@ function Home({ go, openRun }: { go: (s: Screen) => void; openRun: () => void })
                 </div>
                 <span className="time">{duration(w.startedAt, null)}</span>
                 <div className="thin-progress">
-                  <span style={{ width: `${Math.max(8, (done / w.steps.length) * 100)}%` }} />
+                  <span style={{ width: `${Math.max(8, (done / Math.max(1, w.steps.length)) * 100)}%` }} />
                 </div>
               </button>
             );
@@ -348,8 +348,12 @@ function RunDialog({ close, started }: { close: () => void; started: (r: Run) =>
   const repos = settings?.repositories ?? [];
   const [repo, setRepo] = useState(repos[0]?.name ?? "");
   const [mine, setMine] = useState<GhRepo[]>([]);
+  const [repoHint, setRepoHint] = useState("Loading repositories…");
   useEffect(() => {
-    api.ghRepos().then((r) => setMine(r.repos)).catch(() => {});
+    api.ghRepos().then(({ repos }) => {
+      setMine(repos);
+      setRepoHint(repos.length ? "owner/name" : "Enter a repository as owner/name.");
+    }).catch(() => setRepoHint("Could not load repositories. Enter owner/name."));
   }, []);
   const [branch, setBranch] = useState("main");
   const [workflow, setWorkflow] = useState("");
@@ -384,7 +388,7 @@ function RunDialog({ close, started }: { close: () => void; started: (r: Run) =>
       }
     >
       <div className="form-grid two">
-        <Field label="Repository" helper="owner/name">
+        <Field label="Repository" helper={repoHint}>
           <input value={repo} onChange={(e) => setRepo(e.target.value)} list="known-repos" placeholder="owner/repository" />
           <datalist id="known-repos">
             {[...repos.map((r) => r.name), ...mine.map((r) => r.name)].filter((n, i, a) => a.indexOf(n) === i).map((n) => (
@@ -633,6 +637,7 @@ function RepairRun({ go, retry, assign }: { go: (s: Screen) => void; retry: () =
                 </button>
               </div>
               <div className="timeline">
+                {steps.length === 0 && <p className="helper">Waiting for repair steps…</p>}
                 {steps.map((step, i) => (
                   <button
                     key={step.key}
