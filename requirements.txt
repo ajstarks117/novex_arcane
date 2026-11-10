@@ -13,3 +13,4 @@ httpx
 requests
 google-genai
 psutil
+cryptography
