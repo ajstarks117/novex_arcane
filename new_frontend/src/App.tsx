@@ -673,8 +673,8 @@ function RepairRun({ go, retry, assign }: { go: (s: Screen) => void; retry: () =
           <div className="decision-bar">
             <div>
               <strong>
-                {run.validationStatus === "SKIPPED" || run.isDraftPr
-                  ? "Draft PR ready · Sandbox skipped · Tests not verified"
+                {run.testVerification === "NOT_VERIFIED" || run.validationStatus === "SKIPPED" || run.isDraftPr
+                  ? (run.prUrl ? "Draft PR open" : run.validationStatus === "ERROR" ? "Static checks failed" : "Static checks passed") + " · Docker tests not verified"
                   : run.testsPassed == null
                   ? "Tests not run yet"
                   : run.testsPassed
@@ -1010,7 +1010,8 @@ function PRPreview() {
   }, [run?.id, run?.failingTest]);
   if (!run) return <div className="page"><Empty title="No run selected" body="Choose a run from Home." /></div>;
   const stats = run.diffSummary;
-  const mermaid = `Build failed → ${run.sha.slice(0, 7)} found → fix written → sandbox ${run.testsPassed ? "passed" : "failed"} → review`;
+  const sandboxSkipped = run.testVerification === "NOT_VERIFIED" || run.validationStatus === "SKIPPED" || run.isDraftPr;
+  const mermaid = `Build failed → ${run.sha.slice(0, 7)} found → fix written → sandbox ${sandboxSkipped ? "skipped" : run.testsPassed ? "passed" : "failed"} → review`;
   const open = async () => {
     setBusy(true);
     setErr("");
@@ -1041,8 +1042,8 @@ function PRPreview() {
             <code>arcane/fix-{run.sha.slice(0, 7)}</code>
             <span>into</span>
             <code>{run.branch}</code>
-            {run.isDraftPr || run.validationStatus === "SKIPPED" ? (
-              <Badge tone="saffron">Draft PR · Sandbox Skipped · Unverified</Badge>
+            {sandboxSkipped ? (
+              <Badge tone="saffron">Docker tests skipped · Unverified</Badge>
             ) : (
               run.testsPassed != null && <Badge tone={run.testsPassed ? "success" : "error"}>{run.testsPassed ? "Sandbox tests passed" : "Sandbox tests failed"}</Badge>
             )}
@@ -1065,17 +1066,17 @@ function PRPreview() {
             </ul>
           </div>
           <div className="pr-section">
-            <h2>{run.isDraftPr || run.validationStatus === "SKIPPED" ? "Verification & Checks" : "What was tested"}</h2>
+            <h2>{sandboxSkipped ? "Verification & Checks" : "What was tested"}</h2>
             <div className="test-grid">
-              {run.isDraftPr || run.validationStatus === "SKIPPED" ? (
+              {sandboxSkipped ? (
                 <>
                   <span><Icon name="check" />Analysis completed</span>
                   <span><Icon name="check" />Commit inspection completed</span>
-                  <span><Icon name="check" />Candidate patch generated</span>
-                  <span><Icon name="check" />Static checks completed (syntax & diff)</span>
+                  {stats.files > 0 && <span><Icon name="check" />Candidate patch generated</span>}
+                  <span><Icon name={run.validationStatus === "ERROR" ? "x" : "check"} />{run.validationStatus === "ERROR" ? "Static checks failed" : "Static checks passed"}</span>
                   <span><Icon name="clock" />Docker sandbox skipped (cloud)</span>
                   <span><Icon name="clock" />Tests not verified</span>
-                  <span><Icon name="check" />Draft PR ready for review</span>
+                  {run.prUrl && <span><Icon name="check" />Draft PR open for review</span>}
                 </>
               ) : (
                 <>
@@ -1097,11 +1098,11 @@ function PRPreview() {
             <span className="fail">Build failed</span><i />
             <span>Commit found</span><i />
             <span>Fix written</span><i />
-            {run.isDraftPr || run.validationStatus === "SKIPPED" ? (
+            {sandboxSkipped ? (
               <>
                 <span>Static checks passed</span><i />
                 <span className="warn">Sandbox skipped</span><i />
-                <span className="ready">Draft PR Review</span>
+                <span>{run.prUrl ? "Draft PR review" : "Review proposal"}</span>
               </>
             ) : (
               <>

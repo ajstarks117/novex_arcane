@@ -111,8 +111,6 @@ async def process_events(app: FastAPI):
         except Exception as e:
             error = str(e)
             logger.error(f"[Consumer] Unhandled error: {error}")
-            if "422" in error and "pull request already exists" in error.lower():
-                error = None
         finally:
             if credential_context is not None:
                 personal_credentials.reset(credential_context)
